@@ -1,3 +1,5 @@
+package scalaTage
+
 import scala.collection.mutable
 // import scala.collection.immutable._
 import scala.math._
