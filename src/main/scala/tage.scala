@@ -109,7 +109,7 @@ class TageTable (val nRows: Int, val histLen: Int, val tagLen: Int, val uBitPeri
 
     def ctrUpdate(oldCtr: Int, taken: Boolean): Int = satUpdate(taken, oldCtr, 3)
 
-    def getBank(pc: Long): Int = getBits(pc, 1, TageBanks)
+    def getBank(pc: Long): Int = getBits(pc, 1, log2(TageBanks))
     def getUnhashedIdx(pc: Long) = pc >> (1 + log2(TageBanks))
     def foldHist(hist: Long, len: Int) = (0 until divUp(histLen, len)).map(i => (hist >> (i*len)) & getMask(len)).reduce(_^_)
     def getIdx(unhashed: Long, hist: Long) = ((unhashed ^ foldHist(hist, log2(nRows))) & rowMask).toInt
@@ -142,13 +142,13 @@ class TageTable (val nRows: Int, val histLen: Int, val tagLen: Int, val uBitPeri
             banks(bank)(idx).tag = tag
             val newCtr = if (alloc) {if (taken) 4 else 3} else ctrUpdate(oldCtr, taken)
             banks(bank)(idx).ctr = newCtr
-            printf(f"updating tag of bank $bank%d, idx $idx%d to $tag%x\n")
-            printf(f"updating ctr of bank $bank%d, idx $idx%d to $newCtr%d\n")
+            // printf(f"updating tag of bank $bank%d, idx $idx%d to $tag%x\n")
+            // printf(f"updating ctr of bank $bank%d, idx $idx%d to $newCtr%d\n")
         }
 
         if (uValid) {
             banks(bank)(idx).u = u
-            printf(f"updating u of bank $bank%d, idx $idx%d to $u%d\n")
+            // printf(f"updating u of bank $bank%d, idx $idx%d to $u%d\n")
         }
     }
 
@@ -174,7 +174,7 @@ class Bim (val nEntries: Int) extends Utils{
         val newCtr = ctrUpdate(lookUp(pc), taken)
         val idx = getIdx(pc)
         table.update(idx, newCtr)
-        printf(f"bim updating idx $idx%d to $newCtr%d\n")
+        // printf(f"bim updating idx $idx%d to $newCtr%d\n")
     }
 }
 
@@ -194,20 +194,20 @@ class Tage extends TageParams with Utils{
         val altDiff: Boolean, val pvdrU: Int, val pvdrCtr: Int, val alloc: Int,
         val allocValid: Boolean) {
         override def toString: String = {
-            f"pc: 0x$pc%x, pvdr($pvdrValid%b): $pvdr%d, altDiff: $altDiff%b, pvdrU: $pvdrU%d, pvdrCtr: $pvdrCtr%d, alloc($allocValid%b): $alloc%d\n"
+            f"pc: 0x$pc%x, pvdr($pvdrValid%b): $pvdr%d, altDiff: $altDiff%b, pvdrU: $pvdrU%d, pvdrCtr: $pvdrCtr%d, alloc($allocValid%b): $alloc%d"
         }
     }
 
     val predictMetas = new mutable.Queue[TageMeta]
 
     def predict(pc: Long): Boolean = {
-        printf("predicting pc: 0x%x\n", pc)
+        // printf("predicting pc: 0x%x\n", pc)
         val tableResps = tables.map(t => {
             val hist = boolArrayToLong(ghist.getHist(t.histLen))
             t.lookUp(pc, hist)
         })
         val bimResp: Boolean = bim.lookUp(pc) >= 2
-        printf(f"bimResp: $bimResp%b\n")
+        // printf(f"bimResp: $bimResp%b\n")
         var altPred: Boolean = bimResp
         var provided: Boolean = false
         var provider = 0
@@ -258,7 +258,7 @@ class Tage extends TageParams with Utils{
     }
 }
 
-object Test {
+object TageTest {
     def main(args: Array[String]): Unit = {
         val bpd = new Tage
         val pred = bpd.predict(0x80000000L)

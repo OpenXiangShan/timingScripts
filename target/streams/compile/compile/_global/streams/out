@@ -1,0 +1,12 @@
+[0m[[0m[31merror[0m] [0m[0m/home/glr/scalaTage/src/main/scala/runTage.scala:45:26: value += is not a member of Int[0m
+[0m[[0m[31merror[0m] [0m[0m  Expression does not convert to assignment because receiver is not assignable.[0m
+[0m[[0m[31merror[0m] [0m[0m            totalMispred += n[0m
+[0m[[0m[31merror[0m] [0m[0m                         ^[0m
+[0m[[0m[31merror[0m] [0m[0m/home/glr/scalaTage/src/main/scala/runTage.scala:49:26: value += is not a member of Int[0m
+[0m[[0m[31merror[0m] [0m[0m  Expression does not convert to assignment because receiver is not assignable.[0m
+[0m[[0m[31merror[0m] [0m[0m            totalCorrect += n[0m
+[0m[[0m[31merror[0m] [0m[0m                         ^[0m
+[0m[[0m[31merror[0m] [0m[0m/home/glr/scalaTage/src/main/scala/runTage.scala:51:18: reassignment to val[0m
+[0m[[0m[31merror[0m] [0m[0m        totalBrs = totalMispred + totalCorrect[0m
+[0m[[0m[31merror[0m] [0m[0m                 ^[0m
+[0m[[0m[31merror[0m] [0m[0mthree errors found[0m

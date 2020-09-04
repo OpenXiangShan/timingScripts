@@ -8,8 +8,9 @@ all: $(SRCS)
 	@mkdir -p $(OUT_DIR)
 	scalac $^ -d $(OUT_DIR)
 
-test:
-	@cd $(OUT_DIR) && scala $(PACKAGE).Test
+# test: $(shell find $(OUT_DIR)/$(PACKAGE) -name "*Test*")
+# 	echo $<
+# 	scala -cp . $(OUT_DIR)/$(PACKAGE).$(basename $(<F))
 
 clean:
 	rm -rf $(OUT_DIR)
