@@ -41,7 +41,9 @@ trait Utils {
     def getBits(x: Long, from: Int, to: Int): Int = ((x & (((1 << (to - from + 1)) - 1) << from)) >>> from).toInt
     def divUp(x: Int, y: Int): Int = (x / y) + (if (x % y != 0) 1 else 0)
 
-    def boolArrayToLong(arr: Array[Boolean]): Long = arr.zipWithIndex.map{ case (b, i) => (if (b) 1 else 0) << i }.reduce(_|_)
+    def boolArrayToLong(arr: Array[Boolean]): Long = {
+        arr.zipWithIndex.map{ case (b, i) => (if (b) 1 << (arr.size - i - 1) else 0) }.reduce(_|_)
+    }
     def boolArrayToInt(arr: Array[Boolean]): Int = boolArrayToLong(arr).toInt
     def toBoolArray(x: Long, len: Int): Array[Boolean] = {
         val arr = new Array[Boolean](len)
@@ -63,19 +65,21 @@ trait GTimer {
     def isCycle(x: Long): Boolean = cycle == x
 }
 
-class GlobalHistory(val maxlen: Int) {
-    val hist: Array[Boolean] = new Array[Boolean](maxlen)
+class GlobalHistory(val maxlen: Int) extends Utils {
+    val hist: Array[Boolean] = Array.fill[Boolean](maxlen)(false)
     var ptr: Int = 0
     def getHistPtr = this.ptr
-    def getHist(len: Int = 64, ptr: Int = this.ptr): Array[Boolean] = {
-        if (ptr - len >= 0)
-            hist.slice(ptr-len, ptr)
-        else
-            hist.slice(ptr-len+maxlen, maxlen) ++ hist.slice(0, ptr)
+    def getHist(len: Int = 64, ptr: Int = this.ptr): Long = {
+        val res = 
+            if (ptr - len >= 0)
+                hist.slice(ptr-len, ptr)
+            else
+                hist.slice(ptr-len+maxlen, maxlen) ++ hist.slice(0, ptr)
+        boolArrayToLong(res)
     }
     def updateHist(taken: Boolean) = {
         hist.update(ptr, taken)
-        ptr = if (ptr + 1 >= maxlen) ptr + 1 - maxlen else ptr + 1
+        ptr = if (ptr + 1 >= maxlen) 0 else ptr + 1
     }
     def recover(oldPtr: Int, taken: Boolean) = {
         ptr = oldPtr
@@ -106,6 +110,8 @@ class TageTable (val nRows: Int, val histLen: Int, val tagLen: Int, val uBitPeri
     }
 
     val banks: Array[Array[Entry]] = Array.fill[Array[Entry]](TageBanks)(Array.fill[Entry](nRows)(new Entry))
+
+    def flush = {banks.foreach(b => b.foreach(e => e.valid = false))}
 
     def ctrUpdate(oldCtr: Int, taken: Boolean): Int = satUpdate(taken, oldCtr, 3)
 
@@ -167,6 +173,7 @@ class Bim (val nEntries: Int) extends Utils{
     val table = Array.fill[Int](nEntries)(2)
     val ctrBits = 2
     val idxMask = getMask(log2(nEntries))
+    def flush = (0 until nEntries).foreach(table.update(_, 2))
     def getIdx(pc: Long): Int = (pc & idxMask).toInt
     def ctrUpdate(old: Int, taken: Boolean): Int = satUpdate(taken, old, ctrBits)
     def lookUp(pc: Long): Int = table(getIdx(pc))
@@ -203,7 +210,7 @@ class Tage extends TageParams with Utils{
     def predict(pc: Long): Boolean = {
         // printf("predicting pc: 0x%x\n", pc)
         val tableResps = tables.map(t => {
-            val hist = boolArrayToLong(ghist.getHist(t.histLen))
+            val hist = ghist.getHist(t.histLen)
             t.lookUp(pc, hist)
         })
         val bimResp: Boolean = bim.lookUp(pc) >= 2
@@ -233,20 +240,20 @@ class Tage extends TageParams with Utils{
             tableResps(provider).ctr, allocEntry, allocatable != 0)
         predictMetas.enqueue(meta)
         brCount += 1
-        println(meta)
-        printf(f"pc:0x$pc%x predicted to be ${if (res) "taken" else "not taken"}%s\n")
+        // println(meta)
+        // printf(f"pc:0x$pc%x predicted to be ${if (res) "taken" else "not taken"}%s\n")
         res
     }
 
     def update(pc: Long, taken: Boolean, pred: Boolean) = {
-        printf(f"updating pc:0x$pc%x, taken:$taken%b, pred:$pred%b\n")
+        // printf(f"updating pc:0x$pc%x, taken:$taken%b, pred:$pred%b\n")
         val meta = predictMetas.dequeue()
         if (pc != meta.pc) println("update pc does not correspond with expected pc\n")
         
         bim.update(pc, taken)
-
+        ghist.updateHist(taken)
         val misPred = taken != pred
-        val hist = boolArrayToLong(ghist.getHist(ptr=meta.histPtr))
+        val hist = ghist.getHist(ptr=meta.histPtr)
         if (meta.pvdrValid) {
             tables(meta.pvdr).pvdrUpdate(pc, hist, taken, meta.pvdrCtr, 
                 if(meta.altDiff) satUpdate(!misPred, meta.pvdrU, 2) else meta.pvdrU)
@@ -256,12 +263,29 @@ class Tage extends TageParams with Utils{
             else (0 until TageNTables).foreach(i => if (i > meta.pvdr) tables(i).decrementU(pc, hist))
         }
     }
+
+    def flush() = {
+        bim.flush
+        tables.foreach(_.flush)
+    }
 }
 
-object TageTest {
+object TageTest extends Utils{
     def main(args: Array[String]): Unit = {
         val bpd = new Tage
-        val pred = bpd.predict(0x80000000L)
-        bpd.update(0x80000000L, true, pred)
+        var hist: Long = 0
+        for (i <- 0 until 10) {
+            // val pred = bpd.predict(0x80000000L)
+            val taken = i % 2 == 0
+            bpd.ghist.updateHist(taken)
+            hist = (hist << 1) | (if (taken) 1 else 0)
+            val tageHist = bpd.ghist.getHist(len=64)
+            var wrong = false
+            if (tageHist != hist) {
+                println(f"at br$i%d, ref_hist:$hist%x, tageHist:$tageHist%x, ptr:${bpd.ghist.getHistPtr}")
+                wrong = true
+            }
+            if (wrong) println("Wrong!")
+        }
     }
 }

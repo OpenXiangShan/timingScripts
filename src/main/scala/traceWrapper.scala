@@ -2,6 +2,7 @@ package scalaTage
 
 import scala.io.Source
 import scala.util.matching.Regex
+import scala.collection.mutable.ArrayBuffer
 
 case class CFIInfo( 
     // val cycle: Int,
@@ -26,11 +27,17 @@ class TraceWrapper() {
 
     def reMatch(str: String, p: Regex) = p findAllMatchIn str
 
-    def getLines(file: String): Array[String] = Source.fromFile(file).getLines().toArray
+    def getLines(file: String) = Source.fromFile(file).getLines()
     
     def checkLine(l: String): String = if ((cfiUpdatePattern findAllIn l).length != 0) l else " "
 
-    def getCfiUpdates(file: String): Array[String] = (getLines(file).map { l => checkLine(l) } filter (_ != " ")) toArray
+    def getCfiUpdates(file: String): Array[String] = {
+        val res = ArrayBuffer[String]()
+        for (l <- getLines(file)) {
+            if (checkLine(l) != " ") res.append(l)
+        }
+        res.toArray
+    }
 
     def getCFIInfo(u: String): CFIInfo = {
         u match {
