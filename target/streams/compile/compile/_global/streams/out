@@ -1,4 +1,0 @@
-[0m[[0m[31merror[0m] [0m[0m/home/glr/scalaTage/src/main/scala/runTage.scala:73:49: Missing conversion operator in '%10'; use %% for literal %, %n for newline[0m
-[0m[[0m[31merror[0m] [0m[0m            println(f"test: ${l.split('/').last}%10.s, $m%d/${c+m}%d mispredicted, rate: ${m.toDouble/(c+m)}%6f")[0m
-[0m[[0m[31merror[0m] [0m[0m                                                ^[0m
-[0m[[0m[31merror[0m] [0m[0mone error found[0m
