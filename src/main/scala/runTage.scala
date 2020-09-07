@@ -80,6 +80,7 @@ object TageRunnerTest {
     def main(args: Array[String]): Unit = {
         val tr = new TageRunner
         val logs = utils.getLogs("/home/glr/nexus-am/tests/cputest/build/")
+        // val logs = Array("/home/glr/XiangShan/debug/dhrystone.log")
         logs.foreach(println)
         val res = tr.runWithLogs(logs)
         tr.printRes(res)
