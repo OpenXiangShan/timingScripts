@@ -193,19 +193,22 @@ class Tage extends BasePredictor with TageParams {
         predictMetas.enqueue(meta)
         brCount += 1
         if (brCount % UBitPeriod == 0) tables.foreach(t => t.banks.foreach(b => b.foreach(e => e.decrementU )))
-        // println(meta)
-        // printf(f"pc:0x$pc%x predicted to be ${if (res) "taken" else "not taken"}%s\n")
+
+        Debug(f"pc:0x$pc%x predicted to be ${if (res) "taken" else "not taken"}%s")
+        
         res
     }
 
     def update(pc: Long, taken: Boolean, pred: Boolean) = {
         // printf(f"updating pc:0x$pc%x, taken:$taken%b, pred:$pred%b\n")
         val meta = predictMetas.dequeue()
-        if (pc != meta.pc) println("update pc does not correspond with expected pc\n")
+        if (pc != meta.pc) Debug("update pc does not correspond with expected pc\n")
         bim.update(pc, taken)
         val misPred = taken != pred
-        // println("[update meta] " + meta + f" | ${if (taken) " T" else "NT"}%s pred to ${if (pred) " T" else "NT"}%s -> ${if(misPred) "miss" else "corr"}%s")
-        // println(f"[update hist] ${ghist.getHistStr(ptr=meta.histPtr)}%s")
+
+        Debug("[update meta] " + meta + f" | ${if (taken) " T" else "NT"}%s pred to ${if (pred) " T" else "NT"}%s -> ${if(misPred) "miss" else "corr"}%s")
+        Debug(f"[update hist] ${ghist.getHistStr(ptr=meta.histPtr)}%s")
+
         ghist.updateHist(taken)
         val hist = ghist.getHist(ptr=meta.histPtr)
         if (meta.pvdrValid) {

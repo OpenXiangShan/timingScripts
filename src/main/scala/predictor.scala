@@ -43,12 +43,15 @@ trait PredictorUtils {
     def PriorityEncoder(x: Int, len: Int): Int = PriorityEncoder(toBoolArray(x, len))
 
     def boolArrayToString(arr: Array[Boolean]): String = arr.map(if(_) "1" else "0").reduce(_+_)
+
 }
 
 abstract class BasePredictor extends PredictorUtils {
     def predict(pc: Long) : Boolean
     def update(pc: Long, taken: Boolean, pred: Boolean): Unit
     def name: String
+    val debug = false
+    def Debug(info: String) = if (this.debug) println(info)
 }
 
 abstract class PredictorComponents extends PredictorUtils {}
