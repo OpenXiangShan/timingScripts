@@ -51,6 +51,7 @@ abstract class BasePredictor extends PredictorUtils {
     def update(pc: Long, taken: Boolean, pred: Boolean): Unit
     def name: String
     val debug = false
+    val updateOnUncond = false
     def Debug(info: String) = if (this.debug) println(info)
 }
 

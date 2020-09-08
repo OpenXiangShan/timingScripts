@@ -26,21 +26,23 @@ class BranchPredictorRunner() {
     def runWithCFIInfo(cfis: Iterator[CFIInfo]) = {     
         //                               pc  , (mis, cor)
         val stats = new mutable.HashMap [Long, Array[Int]] 
-        cfis.foreach(i => 
+        cfis.foreach { case CFIInfo(isBr, pc, taken, misPred) => 
             // we only care about branches
-            if (i.isBr) {
-                val pred = bp.predict(i.pc)
-                bp.update(i.pc, i.taken, pred)
-                if (i.taken != pred) {
-                    if (stats.contains(i.pc)) stats(i.pc)(0) += 1
-                    else stats += (i.pc -> Array(1, 0))
+            if (isBr) {
+                val pred = bp.predict(pc)
+                bp.update(pc, taken, pred)
+                if (taken != pred) {
+                    if (stats.contains(pc)) stats(pc)(0) += 1
+                    else stats += (pc -> Array(1, 0))
                 }
                 else {
-                    if (stats.contains(i.pc)) stats(i.pc)(1) += 1
-                    else stats += (i.pc -> Array(0, 1))
+                    if (stats.contains(pc)) stats(pc)(1) += 1
+                    else stats += (pc -> Array(0, 1))
                 }
+            } else {
+                bp.updateUncond
             }
-        )
+        }
 
         def getAndPrintPreds(stats: mutable.HashMap [Long, Array[Int]]): (Int, Int, Int) = {
             var brPrint = 0
@@ -84,10 +86,11 @@ class BranchPredictorRunner() {
 
 object BranchPredictorRunnerTest {
     def main(args: Array[String]): Unit = {
+        args.foreach {println(_)}
         val bpr = new BranchPredictorRunner
         // val logs = utils.getLogs("/home/glr/nexus-am/tests/cputest/build/")
-        val logs = Array("/home/glr/XiangShan/debug/dhrystone.log")
-        // val logs = Array("/home/glr/XiangShan/debug/coremark.log")
+        // val logs = Array("/home/glr/XiangShan/debug/dhrystone.log")
+        val logs = Array("/home/glr/XiangShan/debug/coremark.log")
         // val logs = Array("/home/glr/XiangShan/debug/coremark10.log")
         // val logs = Array("/home/glr/XiangShan/debug/microbench.log")
         // val logs = (0 until 10).map(_ => "/home/glr/XiangShan/debug/coremark.log").toArray

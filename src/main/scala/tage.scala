@@ -195,9 +195,11 @@ class Tage extends BasePredictor with TageParams {
         if (brCount % UBitPeriod == 0) tables.foreach(t => t.banks.foreach(b => b.foreach(e => e.decrementU )))
 
         Debug(f"pc:0x$pc%x predicted to be ${if (res) "taken" else "not taken"}%s")
-        
+
         res
     }
+
+    def updateUncond = if(updateOnUncond) ghist.updateHist(true)
 
     def update(pc: Long, taken: Boolean, pred: Boolean) = {
         // printf(f"updating pc:0x$pc%x, taken:$taken%b, pred:$pred%b\n")
