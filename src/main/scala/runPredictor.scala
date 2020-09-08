@@ -1,10 +1,12 @@
 package scalaTage
 
 import scala.collection.mutable
+import scala.util.matching.Regex
 // import scala.collection.immutable._
 import scala.math._
 import scala.util._
 import sys.process._
+import java.io.File
 
 object utils {
     def getLogs(path: String): Array[String] = {
@@ -73,7 +75,17 @@ class BranchPredictorRunner() {
 
     def runWithLogs(logs: Array[String]): Array[(String, (Int, Int))] = {
         println(f"Running with ${bp}%s")
-        logs.map(l => {println(s"processing log $l"); (l, runWithCFIInfo(getCfis(l)));}).toArray
+        logs.map(l => {
+            val log = new File(l)
+            if (log.exists()) {
+                println(s"processing log $l")
+                (l, runWithCFIInfo(getCfis(l)))
+            }
+            else {
+                println(s"$l not exists")
+                (l, (1, 1))
+            }
+        }).toArray
     }
 
     def printRes(res: Array[(String, (Int, Int))]) = {
@@ -85,16 +97,35 @@ class BranchPredictorRunner() {
 }
 
 object BranchPredictorRunnerTest {
+    val usage = """
+        Usage: --log-in-debug logname
+    """
     def main(args: Array[String]): Unit = {
-        args.foreach {println(_)}
+        if (args.length == 0) println(usage)
+        val arglist = args.toList
+        type OptionMap = Map[Symbol, Any]
+
+        def nextOption(map : OptionMap, list: List[String]) : OptionMap = {
+            def isSwitch(s : String)= (s(0) == '-')
+            def fileToPathInDebug(file: String) = "/home/glr/XiangShan/debug/" + file + ".log"
+            list match {
+                case Nil => map
+                case "--log-in-debug" :: file :: tail => 
+                    nextOption(map ++ Map('file -> fileToPathInDebug(file)), tail)
+                // case string :: opt2 :: tail if isSwitch(opt2) => 
+                //                     nextOption(map ++ Map('infile -> string), list.tail)
+                // case string :: Nil =>  nextOption(map ++ Map('infile -> string), list.tail)
+                case option :: tail => { println("Unknown option "+option); nextOption(map, list.tail);}
+            }
+        }
+        val options = nextOption(Map(),arglist)
         val bpr = new BranchPredictorRunner
         // val logs = utils.getLogs("/home/glr/nexus-am/tests/cputest/build/")
         // val logs = Array("/home/glr/XiangShan/debug/dhrystone.log")
-        val logs = Array("/home/glr/XiangShan/debug/coremark.log")
+        val logs = Array(options('file).toString)
         // val logs = Array("/home/glr/XiangShan/debug/coremark10.log")
         // val logs = Array("/home/glr/XiangShan/debug/microbench.log")
         // val logs = (0 until 10).map(_ => "/home/glr/XiangShan/debug/coremark.log").toArray
-        logs.foreach(println)
         val res = bpr.runWithLogs(logs)
         bpr.printRes(res)
     }
