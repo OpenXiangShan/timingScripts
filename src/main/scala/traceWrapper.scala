@@ -14,9 +14,13 @@ case class CFIInfo(
     override def toString: String = f"isBr($isBr%b) pc($pc%x) taken($taken%b) mispred($misPred%b)\n"
 }
 
+// This is a wrapper of trace produced by XiangShan BPU update,
+// which wraps cfi_updates into class CFIInfo
 class TraceWrapper() {
     val cfiUpdatePattern = "cfi_update".r
     val cfiInfoExtractPattern = raw"isBr\(([0-1])\) pc\(([0-9|a-f]{10})\) taken\(([0-1])\) mispred\(([0-1])\)".r.unanchored
+
+    def dumbCFI = CFIInfo(false, 0, false, false)
 
     def toBoolean(s: String): Boolean = 
         s match {
@@ -28,36 +32,25 @@ class TraceWrapper() {
     def reMatch(str: String, p: Regex) = p findAllMatchIn str
 
     def getLines(file: String) = Source.fromFile(file).getLines()
-    
-    def checkLine(l: String): String = if ((cfiUpdatePattern findAllIn l).length != 0) l else " "
-
-    def getCfiUpdates(file: String): Array[String] = {
-        val res = ArrayBuffer[String]()
-        for (l <- getLines(file)) {
-            if (checkLine(l) != " ") res.append(l)
-        }
-        res.toArray
-    }
 
     def getCFIInfo(u: String): CFIInfo = {
         u match {
             case cfiInfoExtractPattern(isBr, pc, taken, misPred) =>
                 CFIInfo(toBoolean(isBr), java.lang.Long.parseLong(pc.trim(), 16), toBoolean(taken), toBoolean(misPred))
-            case _ => {println(" not matched" + u); CFIInfo(false, 0, false, false)}
+            case cfiUpdatePattern() => { println(" not a valid cfi_update line" + u); dumbCFI }
+            case _ => dumbCFI // not related lines
         }
     }
 
-    def getCFIInfos(updates: Array[String]): Array[CFIInfo] = updates.map(u => getCFIInfo(u))
-
-    def getCFIInfosFromFile(file: String): Array[CFIInfo] = getCFIInfos(getCfiUpdates(file))
+    def getCFIInfosFromFile(file: String): Iterator[CFIInfo] = getLines(file).map(getCFIInfo(_))
 
 }
 
-object WrapperTest{
-    def main(args: Array[String]): Unit = {
-        val tw = new TraceWrapper
-        val file = "/home/glr/nexus-am/tests/cputest/build/dummy.log"
-        tw.getCFIInfosFromFile(file).foreach(println)
-    }
-}
+// object WrapperTest{
+//     def main(args: Array[String]): Unit = {
+//         val tw = new TraceWrapper
+//         val file = "/home/glr/nexus-am/tests/cputest/build/dummy.log"
+//         tw.getCFIInfosFromFile(file).foreach(println)
+//     }
+// }
 
