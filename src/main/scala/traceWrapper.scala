@@ -33,16 +33,16 @@ class TraceWrapper() {
 
     def getLines(file: String) = Source.fromFile(file).getLines()
 
-    def getCFIInfo(u: String): CFIInfo = {
+    def getCFIInfo(u: String): Any = {
         u match {
             case cfiInfoExtractPattern(isBr, pc, taken, misPred) =>
                 CFIInfo(toBoolean(isBr), java.lang.Long.parseLong(pc.trim(), 16), toBoolean(taken), toBoolean(misPred))
             case cfiUpdatePattern() => { println(" not a valid cfi_update line" + u); dumbCFI }
-            case _ => dumbCFI // not related lines
+            case _ => 0 // not related lines
         }
     }
 
-    def getCFIInfosFromFile(file: String): Iterator[CFIInfo] = getLines(file).map(getCFIInfo(_))
+    def getCFIInfosFromFile(file: String): Iterator[Any] = getLines(file).map(getCFIInfo(_))
 
 }
 

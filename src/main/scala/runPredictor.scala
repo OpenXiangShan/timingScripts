@@ -23,26 +23,30 @@ class BranchPredictorRunner() {
 
     val maxBrPrint = 10
 
-    def getCfis(file: String): Iterator[CFIInfo] = tw.getCFIInfosFromFile(file)
+    def getCfis(file: String): Iterator[Any] = tw.getCFIInfosFromFile(file)
 
-    def runWithCFIInfo(cfis: Iterator[CFIInfo]) = {     
+    def runWithCFIInfo(cfis: Iterator[Any]) = {     
         //                               pc  , (mis, cor)
         val stats = new mutable.HashMap [Long, Array[Int]] 
-        cfis.foreach { case CFIInfo(isBr, pc, taken, misPred) => 
-            // we only care about branches
-            if (isBr) {
-                val pred = bp.predict(pc)
-                bp.update(pc, taken, pred)
-                if (taken != pred) {
-                    if (stats.contains(pc)) stats(pc)(0) += 1
-                    else stats += (pc -> Array(1, 0))
+        cfis.foreach { cfi => cfi match {
+            case CFIInfo(isBr, pc, taken, misPred) => {
+                    // we only care about branches
+                    if (isBr) {
+                        val pred = bp.predict(pc)
+                        bp.update(pc, taken, pred)
+                        if (taken != pred) {
+                            if (stats.contains(pc)) stats(pc)(0) += 1
+                            else stats += (pc -> Array(1, 0))
+                        }
+                        else {
+                            if (stats.contains(pc)) stats(pc)(1) += 1
+                            else stats += (pc -> Array(0, 1))
+                        }
+                    } else {
+                        bp.updateUncond
+                    }
                 }
-                else {
-                    if (stats.contains(pc)) stats(pc)(1) += 1
-                    else stats += (pc -> Array(0, 1))
-                }
-            } else {
-                bp.updateUncond
+            case _ => 
             }
         }
 
@@ -120,9 +124,9 @@ object BranchPredictorRunnerTest {
         }
         val options = nextOption(Map(),arglist)
         val bpr = new BranchPredictorRunner
-        // val logs = utils.getLogs("/home/glr/nexus-am/tests/cputest/build/")
+        val logs = utils.getLogs("/home/glr/nexus-am/tests/cputest/build/")
         // val logs = Array("/home/glr/XiangShan/debug/dhrystone.log")
-        val logs = Array(options('file).toString)
+        // val logs = Array(options('file).toString)
         // val logs = Array("/home/glr/XiangShan/debug/coremark10.log")
         // val logs = Array("/home/glr/XiangShan/debug/microbench.log")
         // val logs = (0 until 10).map(_ => "/home/glr/XiangShan/debug/coremark.log").toArray
