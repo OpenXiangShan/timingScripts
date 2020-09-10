@@ -35,10 +35,14 @@ trait PredictorUtils {
         (0 until len).map(i => ((x >>> i) & 1) == 1).toArray
     }
     def PriorityEncoder(arr: Array[Boolean]): Int = {
-        var res = arr.size - 1
-        arr.zipWithIndex.reverse.foreach{case(b,i) => if (b) res = i}
-        // println(f"arr is ${boolArrayToString(arr)}%s, res is $res")
-        res
+        def getFirst(arr: List[Boolean], i: Int): Int = {
+            arr match {
+                case Nil => i - 1
+                case true :: tail => i
+                case false :: tail => getFirst(tail, i+1)
+            }
+        }
+        getFirst(arr.toList, 0)
     }
     def PriorityEncoder(x: Int, len: Int): Int = PriorityEncoder(toBoolArray(x, len))
 
@@ -51,7 +55,7 @@ abstract class BasePredictor extends PredictorUtils {
     def update(pc: Long, taken: Boolean, pred: Boolean): Unit
     def name: String
     val debug = false
-    val updateOnUncond = false
+    val updateOnUncond = true
     def Debug(info: String) = if (this.debug) println(info)
 }
 
@@ -70,7 +74,7 @@ class GlobalHistory(val maxHisLen: Int) extends PredictorUtils {
             (hist.slice(ptr-len+arrMaxLen, arrMaxLen) ++ hist.slice(0, ptr)).reverse
     }
 
-    def apply(ptr: Int = this.ptr) = hist(ptr)
+    def apply(ptr: Int = this.ptr) = if (ptr >= 0) hist(ptr) else hist(ptr + arrMaxLen)
 
     def getHistStr(len: Int = maxHisLen, ptr: Int = this.ptr): String = boolArrayToString(this.getHist(len, ptr))
 
@@ -97,6 +101,13 @@ class FoldedHist(val totalLen: Int, val compLen: Int) {
         comp &= (1 << compLen) - 1
     }
     def apply(): Int = this.comp
+}
+
+class PathHistory(val len: Int, val selPos: Int = 2) extends PredictorUtils {
+    var p = 0
+    val mask = getMask(len)
+    def update(pc: Long): Unit = p = ((p << 1) | (getBit(pc, selPos) >>> selPos)) & mask
+    def apply() = p
 }
 
 trait GTimer {

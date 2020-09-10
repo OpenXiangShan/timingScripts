@@ -33,8 +33,8 @@ class BranchPredictorRunner(val ops: Map[Symbol, Any]) {
         cfis.foreach { cfi => cfi match {
             case CFIInfo(isBr, pc, taken, misPred) => {
                     // we only care about branches
+                    val pred = bp.predict(pc, isBr)
                     if (isBr) {
-                        val pred = bp.predict(pc)
                         bp.update(pc, taken, pred)
                         if (taken != pred) {
                             if (stats.contains(pc)) stats(pc)(0) += 1
@@ -45,7 +45,7 @@ class BranchPredictorRunner(val ops: Map[Symbol, Any]) {
                             else stats += (pc -> Array(0, 1))
                         }
                     } else {
-                        bp.updateUncond
+                        bp.updateUncond(pc)
                     }
                 }
             case _ => 
