@@ -8,6 +8,8 @@ import scala.util._
 
 trait TageParams {
     val BimEntries = 2048
+    val minHist = 2
+    val maxHist = 2048
     //                   Sets  Hist   Tag
     val TableInfo = Seq(( 128,    2,    7),
                         ( 128,    4,    7),
@@ -66,10 +68,10 @@ class TageTable (val nRows: Int, val histLen: Int, val tagLen: Int, val uBitPeri
     def ctrUpdate(oldCtr: Int, taken: Boolean): Int = satUpdate(taken, oldCtr, 3)
 
     def getBank(pc: Long): Int = ((pc >>> 1) & bankMask).toInt
-    def getUnhashedIdx(pc: Long): Long = pc >>> 1
-    def foldHist(hist: Array[Boolean], len: Int): Long = (0 until divUp(histLen, len)).map(i => boolArrayToLong(hist.reverse.slice(i*len, min((i+1)*len, histLen)))).reduce(_^_)
+    def getUnhashedIdx(pc: Long): Long = pc >>> (1 + log2(TageBanks))
+    def foldHist(hist: Array[Boolean], len: Int): Long = (0 until divUp(histLen, len)).map(i => boolArrayToLong(hist.slice(i*len, min((i+1)*len, histLen)))).reduce(_^_)
     def getIdx(unhashed: Long, hist: Array[Boolean]): Int = ((unhashed ^ foldHist(hist, log2(nRows))) & rowMask).toInt
-    def getTag(unhashed: Long, hist: Array[Boolean]): Int = (((unhashed >>> log2(nRows)) ^ foldHist(hist, tagLen)) & tagMask).toInt
+    def getTag(unhashed: Long, hist: Array[Boolean]): Int = (((unhashed) ^ foldHist(hist, tagLen) ^ (foldHist(hist, tagLen-1) << 1)) & tagMask).toInt
 
     def getBIT(pc: Long, hist: Array[Boolean]): (Int, Int, Int) = (getBank(pc), getIdx(getUnhashedIdx(pc), hist), getTag(getUnhashedIdx(pc), hist))
 
@@ -118,15 +120,30 @@ class TageTable (val nRows: Int, val histLen: Int, val tagLen: Int, val uBitPeri
 
 class Bim () extends TageComponents {
     val nEntries = BimEntries
-    val table = Array.fill[Int](nEntries)(2)
+    val ratio = 2
+    val predTable = Array.fill[Boolean](nEntries)(true)
+    val hystTable = Array.fill[Boolean](nEntries >> ratio)(false)
     val ctrBits = 2
     val idxMask = getMask(log2Up(nEntries))
-    def flush = (0 until nEntries).foreach(table.update(_, 2))
-    def getIdx(pc: Long): Int = ((pc >>> 1) & idxMask).toInt
+    def flush = {
+        (0 until nEntries).foreach(predTable.update(_, true))
+        (0 until nEntries >> ratio).foreach(hystTable.update(_, false))
+    }
+    def getIdx(pc: Long): (Int, Int) = {
+        val pind = ((pc >>> 1) & idxMask).toInt
+        (pind, pind >>> ratio)
+    }
+    def toInt(b: Boolean): Int = if (b) 1 else 0
+    def toBool(i: Int): Boolean = if (i > 0) true else false
+    def getCtr(ind: (Int, Int)): Int = (toInt(predTable(ind._1)) << 1) + toInt(hystTable(ind._2))
     def ctrUpdate(old: Int, taken: Boolean): Int = satUpdate(taken, old, ctrBits)
-    def lookUp(pc: Long): Int = table(getIdx(pc))
+    def lookUp(pc: Long): Boolean = predTable(getIdx(pc)._1)
     def update(pc: Long, taken: Boolean): Unit = {
-        table.update(getIdx(pc), ctrUpdate(lookUp(pc), taken))
+        val ind    = getIdx(pc)
+        val oldCtr = getCtr(ind)
+        val newCtr = ctrUpdate(oldCtr, taken)
+        predTable.update(ind._1, toBool(newCtr & 0x2))
+        hystTable.update(ind._2, toBool(newCtr & 0x1))
         // printf(f"bim updating idx $idx%d to $newCtr%d\n")
     }
 }
@@ -159,7 +176,7 @@ class Tage extends BasePredictor with TageParams {
         // printf("predicting pc: 0x%x\n", pc)
         val hist = ghist.getHist(maxHisLen)
         val tableResps = tables.map(t => t.lookUp(pc, hist))
-        val bimResp: Boolean = bim.lookUp(pc) >= 2
+        val bimResp: Boolean = bim.lookUp(pc)
         // printf(f"bimResp: $bimResp%b\n")
         var altPred: Boolean = bimResp
         var provided: Boolean = false
@@ -229,7 +246,7 @@ class Tage extends BasePredictor with TageParams {
     }
 
     def name: String = "BOOM_TAGE"
-    override def toString: String = f"${this.name}%s with params:\n${outPutParams}%s\n"
+    override def toString: String = f"${this.name}%s with params:\n${outPutParams}%s\nUsing global history ${if(updateOnUncond) "with" else "without"}%s jumps\n"
 }
 
 // object TageTest extends PredictorUtils{

@@ -58,7 +58,7 @@ abstract class BasePredictor extends PredictorUtils {
 abstract class PredictorComponents extends PredictorUtils {}
 
 class GlobalHistory(val maxHisLen: Int) extends PredictorUtils {
-    val arrMaxLen = maxHisLen * 2
+    val arrMaxLen = 1 << 8
     val hist: Array[Boolean] = Array.fill[Boolean](arrMaxLen)(false)
     var ptr: Int = 0
     var count: Int = 0

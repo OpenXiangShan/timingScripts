@@ -17,11 +17,13 @@ object utils {
 }
 
 
-class BranchPredictorRunner() {
+class BranchPredictorRunner(val ops: Map[Symbol, Any]) {
     val tw = new TraceWrapper
     val bp = new Tage
 
     val maxBrPrint = 10
+
+    val defaultInput = "/home/glr/XiangShan/debug/dhrystone.log"
 
     def getCfis(file: String): Iterator[Any] = tw.getCFIInfosFromFile(file)
 
@@ -77,20 +79,19 @@ class BranchPredictorRunner() {
         (totalCorrect, totalMispred)
     }
 
-    def runWithLogs(logs: Array[String]): Array[(String, (Int, Int))] = {
-        println(f"Running with ${bp}%s")
-        logs.map(l => {
-            val log = new File(l)
-            if (log.exists()) {
-                println(s"processing log $l")
-                (l, runWithCFIInfo(getCfis(l)))
-            }
-            else {
-                println(s"$l not exists")
-                (l, (1, 1))
-            }
-        }).toArray
+    def runWithLog(log: String): (String, (Int, Int)) = {
+        val l = new File(log)
+        if (l.exists()) {
+            println(s"processing log $l")
+            (log, runWithCFIInfo(getCfis(log)))
+        }
+        else {
+            println(s"$l not exists, returning null result")
+            (log, (1, 1))
+        }
     }
+
+    def runWithLogs(logs: Array[String]): Array[(String, (Int, Int))] = logs.map(runWithLog(_)).toArray
 
     def printRes(res: Array[(String, (Int, Int))]) = {
         res.foreach { case(l, (c, m)) => {
@@ -98,13 +99,39 @@ class BranchPredictorRunner() {
         }}
     }
 
+    def checkOps(ops: Map[Symbol, Any]) = {
+        if (ops.contains('file) && ops.contains('multipleFiles)) {
+            println("Conflict arguments, you could only use --log-in-debug OR --run-cputest")
+            System.exit(1)
+        }
+    }
+
+    def run(ops: Map[Symbol, Any] = this.ops) = {
+        println(f"Running with ${bp}%s")
+        checkOps(ops)
+        val res = 
+            if (ops.contains('file)) {
+                Array(runWithLog(ops('file).toString))
+            }
+            else if (ops.contains('multipleFiles)) {
+                runWithLogs(ops('multipleFiles).asInstanceOf[Array[String]])
+            }
+            else {
+                println("No input specified, running on default dhrystone\n")
+                Array(runWithLog(defaultInput))
+            }
+        printRes(res)
+    }
+
+    run(ops)
+
 }
 
-object BranchPredictorRunnerTest {
+object ArgParser {
     val usage = """
-        Usage: --log-in-debug logname
+        Usage: [--log-in-debug logname] | [--run-cputest]
     """
-    def main(args: Array[String]): Unit = {
+    def parse(args: Array[String]) = {
         if (args.length == 0) println(usage)
         val arglist = args.toList
         type OptionMap = Map[Symbol, Any]
@@ -116,21 +143,21 @@ object BranchPredictorRunnerTest {
                 case Nil => map
                 case "--log-in-debug" :: file :: tail => 
                     nextOption(map ++ Map('file -> fileToPathInDebug(file)), tail)
+                case "--run-cputest" :: tail =>
+                    nextOption(map ++ Map('multipleFiles -> utils.getLogs("/home/glr/nexus-am/tests/cputest/build/")), tail)
                 // case string :: opt2 :: tail if isSwitch(opt2) => 
                 //                     nextOption(map ++ Map('infile -> string), list.tail)
                 // case string :: Nil =>  nextOption(map ++ Map('infile -> string), list.tail)
                 case option :: tail => { println("Unknown option "+option); nextOption(map, list.tail);}
             }
         }
-        val options = nextOption(Map(),arglist)
-        val bpr = new BranchPredictorRunner
-        val logs = utils.getLogs("/home/glr/nexus-am/tests/cputest/build/")
-        // val logs = Array("/home/glr/XiangShan/debug/dhrystone.log")
-        // val logs = Array(options('file).toString)
-        // val logs = Array("/home/glr/XiangShan/debug/coremark10.log")
-        // val logs = Array("/home/glr/XiangShan/debug/microbench.log")
-        // val logs = (0 until 10).map(_ => "/home/glr/XiangShan/debug/coremark.log").toArray
-        val res = bpr.runWithLogs(logs)
-        bpr.printRes(res)
+        nextOption(Map(),arglist)
+    }
+}
+
+object BranchPredictorRunnerTest {
+    def main(args: Array[String]): Unit = {
+        val options = ArgParser.parse(args)
+        val bpr = new BranchPredictorRunner(options)
     }
 }
