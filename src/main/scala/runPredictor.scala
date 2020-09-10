@@ -145,6 +145,8 @@ object ArgParser {
                     nextOption(map ++ Map('file -> fileToPathInDebug(file)), tail)
                 case "--run-cputest" :: tail =>
                     nextOption(map ++ Map('multipleFiles -> utils.getLogs("/home/glr/nexus-am/tests/cputest/build/")), tail)
+                case "--his" :: value :: tail =>
+                    nextOption(map ++ Map('hislen -> value.toInt), tail)
                 // case string :: opt2 :: tail if isSwitch(opt2) => 
                 //                     nextOption(map ++ Map('infile -> string), list.tail)
                 // case string :: Nil =>  nextOption(map ++ Map('infile -> string), list.tail)

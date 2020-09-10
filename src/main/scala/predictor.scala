@@ -58,7 +58,7 @@ abstract class BasePredictor extends PredictorUtils {
 abstract class PredictorComponents extends PredictorUtils {}
 
 class GlobalHistory(val maxHisLen: Int) extends PredictorUtils {
-    val arrMaxLen = 1 << 8
+    val arrMaxLen = maxHisLen + 32
     val hist: Array[Boolean] = Array.fill[Boolean](arrMaxLen)(false)
     var ptr: Int = 0
     var count: Int = 0
@@ -69,6 +69,8 @@ class GlobalHistory(val maxHisLen: Int) extends PredictorUtils {
         else
             (hist.slice(ptr-len+arrMaxLen, arrMaxLen) ++ hist.slice(0, ptr)).reverse
     }
+
+    def apply(ptr: Int = this.ptr) = hist(ptr)
 
     def getHistStr(len: Int = maxHisLen, ptr: Int = this.ptr): String = boolArrayToString(this.getHist(len, ptr))
 
@@ -82,6 +84,19 @@ class GlobalHistory(val maxHisLen: Int) extends PredictorUtils {
         ptr = oldPtr
         updateHist(taken)
     }
+}
+
+class FoldedHist(val totalLen: Int, val compLen: Int) {
+    var comp: Int = 0
+    val outPoint: Int = totalLen % compLen
+    def toInt(b: Boolean) = if (b) 1 else 0
+    def update(hNew: Boolean, hOld: Boolean): Unit = {
+        comp = (comp << 1) | toInt(hNew)
+        comp ^= toInt(hOld) << outPoint // evict bit
+        comp ^= comp >>> compLen        // this highset bit is xored into new hist bit
+        comp &= (1 << compLen) - 1
+    }
+    def apply(): Int = this.comp
 }
 
 trait GTimer {
