@@ -92,7 +92,7 @@ class GlobalHistory(val maxHisLen: Int) extends PredictorUtils {
     }
 }
 
-class FoldedHist(val totalLen: Int, val compLen: Int) {
+class FoldedHist(val totalLen: Int, val compLen: Int) extends PredictorUtils {
     var comp: Int = 0
     val outPoint: Int = totalLen % compLen
     def toInt(b: Boolean) = if (b) 1 else 0
@@ -103,6 +103,7 @@ class FoldedHist(val totalLen: Int, val compLen: Int) {
         comp &= (1 << compLen) - 1
     }
     def apply(): Int = this.comp
+    override def toString(): String = f"totalLen:$totalLen%d, foldedLen:$compLen%d, foldedHist:${boolArrayToString(toBoolArray(comp, compLen))}%s"
 }
 
 class PathHistory(val len: Int, val selPos: Int = 2) extends PredictorUtils {
@@ -110,6 +111,7 @@ class PathHistory(val len: Int, val selPos: Int = 2) extends PredictorUtils {
     val mask = getMask(len)
     def update(pc: Long): Unit = p = ((p << 1) | (getBit(pc, selPos) >>> selPos)) & mask
     def apply() = p
+    override def toString(): String = f"pathLen:$len%d, pathHist:${boolArrayToString(toBoolArray(p, len))}%s"
 }
 
 trait GTimer {

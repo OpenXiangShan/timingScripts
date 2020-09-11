@@ -196,8 +196,8 @@ class TageTable (val nRows: Int, val histLen: Int, val tagLen: Int, val uBitPeri
 }
 
 class Bim (val nEntries: Int, val ratio: Int)(implicit val p: TageParams) extends TageComponents()(p) {
-    val predTable = Array.fill[Boolean](nEntries)(true)
-    val hystTable = Array.fill[Boolean](nEntries >> ratio)(false)
+    val predTable = Array.fill[Boolean](nEntries)(false)
+    val hystTable = Array.fill[Boolean](nEntries >> ratio)(true)
     val ctrBits = 2
     val idxMask = getMask(log2Up(nEntries))
     def flush = {
@@ -362,6 +362,7 @@ class Tage(params: TageParams = TageParams()) extends BasePredictor {
 }
 
 object Tage {
+    // This is a factory method to produce Tage instances according to passed option
     def apply(ops: Map[Symbol, Any]): Tage = {
         if (ops.contains('hislen)) {
             println(f"max history length set to ${ops('hislen).asInstanceOf[Int]}%d")

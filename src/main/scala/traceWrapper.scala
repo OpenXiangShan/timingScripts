@@ -44,6 +44,31 @@ class TraceWrapper() {
 
     def getCFIInfosFromFile(file: String): Iterator[Any] = getLines(file).map(getCFIInfo(_))
 
+    def getXSResult(file: String): (Int, Int, Int, Int) = {
+        var numBr = 0
+        var numBrMispred = 0
+        var numCFI = 0
+        var numJMispred = 0
+        val cfis = getCFIInfosFromFile(file)
+        cfis.foreach { 
+            case CFIInfo(isBr, _, _, misp) => {
+                numCFI += 1
+                if (isBr) {
+                    numBr += 1
+                    if (misp)
+                        numBrMispred += 1
+                }
+                else {
+                    if (misp)
+                        numJMispred += 0
+                }
+            }
+            case _ =>
+        }
+        println(f"In $file%s, totally $numBrMispred%d/$numBr%d branches mispredicted, totally $numJMispred%d/${numCFI-numBr}%d jumps mispredicted")
+        (numBrMispred, numBr, numJMispred, numCFI)
+    }
+
 }
 
 // object WrapperTest{
