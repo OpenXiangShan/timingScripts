@@ -8,18 +8,55 @@ import scala.util._
 import sys.process._
 import java.io.File
 
-object utils {
+trait ArgParser {
+    val usage = """
+        Usage: [--log-in-debug logname] | [--run-cputest]
+    """
+    type OptionMap = Map[Symbol, Any]
+    
     def getLogs(path: String): Array[String] = {
         val files = s"ls $path".!!.split('\n')
         val logPattern = raw"log".r.unanchored
         files.map(f => if ((logPattern findAllIn f).length != 0) path+f else "").filter(_ != "").toArray
     }
+
+    def parse(args: Array[String]) = {
+        if (args.length == 0) println(usage)
+        val arglist = args.toList
+
+        def nextOption(map : OptionMap, list: List[String]) : OptionMap = {
+            def isSwitch(s : String)= (s(0) == '-')
+            def fileToPathInDebug(file: String) = "/home/glr/XiangShan/debug/" + file + ".log"
+            list match {
+                case Nil => map
+                case "--log-in-debug" :: file :: tail => 
+                    nextOption(map ++ Map('file -> fileToPathInDebug(file)), tail)
+                case "--run-cputest" :: tail =>
+                    nextOption(map ++ Map('multipleFiles -> getLogs("/home/glr/nexus-am/tests/cputest/build/")), tail)
+                case "--his" :: value :: tail =>
+                    nextOption(map ++ Map('hislen -> value.toInt), tail)
+                case "--updateOnUncond" :: tail =>
+                    nextOption(map ++ Map('updateOnUncond -> true), tail)
+                case "--withLoop" :: tail =>
+                    nextOption(map ++ Map('withLoop -> true), tail)
+                // case string :: opt2 :: tail if isSwitch(opt2) => 
+                //                     nextOption(map ++ Map('infile -> string), list.tail)
+                // case string :: Nil =>  nextOption(map ++ Map('infile -> string), list.tail)
+                case option :: tail => { println("Unknown option "+option); nextOption(map, list.tail); }
+            }
+        }
+        nextOption(Map(),arglist)
+    }
+}
+
+trait RunnerUtils {
+    this: ArgParser =>
+    def getName(ops: OptionMap): String = ""
 }
 
 
-class BranchPredictorRunner(val ops: Map[Symbol, Any]) {
+class BranchPredictorRunner extends RunnerUtils with ArgParser {
     val tw = new TraceWrapper
-    val bp = new Tage
 
     val maxBrPrint = 10
 
@@ -27,7 +64,7 @@ class BranchPredictorRunner(val ops: Map[Symbol, Any]) {
 
     def getCfis(file: String): Iterator[Any] = tw.getCFIInfosFromFile(file)
 
-    def runWithCFIInfo(cfis: Iterator[Any]) = {     
+    def runWithCFIInfo(cfis: Iterator[Any])(implicit bp: BasePredictor) = {     
         //                               pc  , (mis, cor)
         val stats = new mutable.HashMap [Long, Array[Int]] 
         cfis.foreach { cfi => cfi match {
@@ -79,7 +116,7 @@ class BranchPredictorRunner(val ops: Map[Symbol, Any]) {
         (totalCorrect, totalMispred)
     }
 
-    def runWithLog(log: String): (String, (Int, Int)) = {
+    def runWithLog(log: String)(implicit bp: BasePredictor): (String, (Int, Int)) = {
         val l = new File(log)
         if (l.exists()) {
             println(s"processing log $l")
@@ -91,7 +128,7 @@ class BranchPredictorRunner(val ops: Map[Symbol, Any]) {
         }
     }
 
-    def runWithLogs(logs: Array[String]): Array[(String, (Int, Int))] = logs.map(runWithLog(_)).toArray
+    def runWithLogs(logs: Array[String])(implicit bp: BasePredictor): Array[(String, (Int, Int))] = logs.map(runWithLog(_)).toArray
 
     def printRes(res: Array[(String, (Int, Int))]) = {
         res.foreach { case(l, (c, m)) => {
@@ -99,14 +136,15 @@ class BranchPredictorRunner(val ops: Map[Symbol, Any]) {
         }}
     }
 
-    def checkOps(ops: Map[Symbol, Any]) = {
+    def checkOps(ops: OptionMap) = {
         if (ops.contains('file) && ops.contains('multipleFiles)) {
             println("Conflict arguments, you could only use --log-in-debug OR --run-cputest")
             System.exit(1)
         }
     }
 
-    def run(ops: Map[Symbol, Any] = this.ops) = {
+    def run(ops: OptionMap) = {
+        implicit val bp = Tage(ops)
         println(f"Running with ${bp}%s")
         checkOps(ops)
         val res = 
@@ -122,44 +160,16 @@ class BranchPredictorRunner(val ops: Map[Symbol, Any]) {
             }
         printRes(res)
     }
-
-    run(ops)
-
 }
 
-object ArgParser {
-    val usage = """
-        Usage: [--log-in-debug logname] | [--run-cputest]
-    """
-    def parse(args: Array[String]) = {
-        if (args.length == 0) println(usage)
-        val arglist = args.toList
-        type OptionMap = Map[Symbol, Any]
 
-        def nextOption(map : OptionMap, list: List[String]) : OptionMap = {
-            def isSwitch(s : String)= (s(0) == '-')
-            def fileToPathInDebug(file: String) = "/home/glr/XiangShan/debug/" + file + ".log"
-            list match {
-                case Nil => map
-                case "--log-in-debug" :: file :: tail => 
-                    nextOption(map ++ Map('file -> fileToPathInDebug(file)), tail)
-                case "--run-cputest" :: tail =>
-                    nextOption(map ++ Map('multipleFiles -> utils.getLogs("/home/glr/nexus-am/tests/cputest/build/")), tail)
-                case "--his" :: value :: tail =>
-                    nextOption(map ++ Map('hislen -> value.toInt), tail)
-                // case string :: opt2 :: tail if isSwitch(opt2) => 
-                //                     nextOption(map ++ Map('infile -> string), list.tail)
-                // case string :: Nil =>  nextOption(map ++ Map('infile -> string), list.tail)
-                case option :: tail => { println("Unknown option "+option); nextOption(map, list.tail);}
-            }
-        }
-        nextOption(Map(),arglist)
-    }
-}
 
-object BranchPredictorRunnerTest {
+
+
+object BranchPredictorRunnerTest extends RunnerUtils with ArgParser {
     def main(args: Array[String]): Unit = {
-        val options = ArgParser.parse(args)
-        val bpr = new BranchPredictorRunner(options)
+        val options = parse(args)
+        val bpr = new BranchPredictorRunner
+        bpr.run(options)
     }
 }

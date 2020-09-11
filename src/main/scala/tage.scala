@@ -6,49 +6,39 @@ import scala.math._
 import scala.util._
 
 
-trait TageParams {
-    val BimEntries = 4096
-    val minHist = 2
-    val maxHist = 2048
-    //                   Sets  Hist   Tag
-    // val TableInfo = Seq(( 128,    2,    7),
-    //                     ( 128,    4,    7),
-    //                     ( 256,    8,    8),
-    //                     ( 256,   16,    8),
-    //                     ( 128,   32,    9),
-    //                     ( 128,   64,    9),
-    //                     (  64,  128,   10),
-    //                     (  64,  256,   11),
-    //                     (  32,  512,   12))
-    //                    Sets  Hist   Tag
-    val t         = Seq(( 1024,    4,    7),
-                        ( 1024,    4,    7),
-                        ( 2048,    8,    8),
-                        ( 2048,   16,    8),
-                        ( 2048,   32,    9),
-                        ( 2048,   64,   10),
-                        ( 1024,  128,   11),
-                        ( 1024,  256,   12),
-                        ( 1024,  512,   12),
-                        ( 1024, 1024,   13),
-                        (  512, 2048,   14),
-                        (  512, 4096,   15))
-    val minHisLen: Int = 4
-    val maxHisLen: Int = 640
-    val TableInfo = t.zipWithIndex.map { case((s, h, ta), i) => {
-        val hist = (minHisLen * pow(maxHisLen/minHisLen, i.toDouble / (t.size - 1)) + 0.5).toInt
+case class TageParams (
+    val BimEntries: Int = 4096,
+    val BimRatio: Int = 2,
+    val minHist: Int = 4,
+    val maxHist: Int = 640,
+    //                                    Sets  Tag
+    val t: Seq[Tuple2[Int, Int]]  = Seq(( 1024,   7),
+                                        ( 1024,   7),
+                                        ( 2048,   8),
+                                        ( 2048,   8),
+                                        ( 2048,   9),
+                                        ( 2048,  10),
+                                        ( 1024,  11),
+                                        ( 1024,  12),
+                                        ( 1024,  12),
+                                        ( 1024,  13),
+                                        (  512,  14),
+                                        (  512,  15)),
+    val TageBanks: Int = 16, // FetchWidth
+    val UBitPeriod: Int = 4096)
+{
+    val TableInfo = t.zipWithIndex.map { case((s, ta), i) => {
+        val hist = (minHist * pow(maxHist/minHist, i.toDouble / (t.size - 1)) + 0.5).toInt
         (s, hist, ta)
     }}
-    // def maxHisLen: Int = TableInfo.last._2
+
     val TageNTables = TableInfo.size
-    val UBitPeriod = 4096
-    val TageBanks = 16 // FetchWidth
 
     val TotalBits: Int = TableInfo.map {
         case (s, h, t) => {
         s * (1+t+3+2)
         }
-    }.reduce(_+_) + BimEntries + BimEntries / 4
+    }.reduce(_+_) + BimEntries + BimEntries / (1 << BimRatio)
 
     def outPutParams: String = TableInfo.zipWithIndex.map {case((r, h, t),i) => {f"TageTable[$i%d]: $r%3d rows, $h%3d bits history, $t%2d bits tag\n"}}.reduce(_+_) +
         f"bim: $BimEntries%d entries\n" +
@@ -56,16 +46,16 @@ trait TageParams {
         f"Totally consumed ${TotalBits/8192}%dKB"
 }
 
-abstract class TageComponents extends PredictorComponents with TageParams {}
+abstract class TageComponents()(implicit params: TageParams) extends PredictorComponents {}
 
-class TageTable (val nRows: Int, val histLen: Int, val tagLen: Int, val uBitPeriod: Int, val i: Int) extends TageComponents {
+class TageTable (val nRows: Int, val histLen: Int, val tagLen: Int, val uBitPeriod: Int, val i: Int)(implicit val p: TageParams) extends TageComponents()(p) {
     val useGem5 = true
     
     
     val tagMask = getMask(tagLen)
     val ctrMask = getMask(3)
     val rowMask = getMask(log2Up(nRows))
-    val bankMask = getMask(log2Up(TageBanks))
+    val bankMask = getMask(log2Up(p.TageBanks))
 
     class Entry () {
         var valid: Boolean = false
@@ -94,7 +84,7 @@ class TageTable (val nRows: Int, val histLen: Int, val tagLen: Int, val uBitPeri
     def ctrUpdate(oldCtr: Int, taken: Boolean): Int = satUpdate(taken, oldCtr, 3)
 
     def getBank(pc: Long): Int = ((pc >>> 1) & bankMask).toInt
-    def getUnhashedIdx(pc: Long): Long = pc >>> (1 + log2(TageBanks))
+    def getUnhashedIdx(pc: Long): Long = pc >>> (1 + log2(p.TageBanks))
 
     def F(phist: Int, size: Int): Int = {
         var a1: Int = 0
@@ -205,9 +195,7 @@ class TageTable (val nRows: Int, val histLen: Int, val tagLen: Int, val uBitPeri
     }
 }
 
-class Bim () extends TageComponents {
-    val nEntries = BimEntries
-    val ratio = 2
+class Bim (val nEntries: Int, val ratio: Int)(implicit val p: TageParams) extends TageComponents()(p) {
     val predTable = Array.fill[Boolean](nEntries)(true)
     val hystTable = Array.fill[Boolean](nEntries >> ratio)(false)
     val ctrBits = 2
@@ -237,18 +225,30 @@ class Bim () extends TageComponents {
 
 class TableResp (val ctr: Int, val u: Int, val hit: Boolean) {}
 
-class Tage extends BasePredictor with TageParams {
+class Tage(params: TageParams = TageParams()) extends BasePredictor {
 
     val speculativeUpdate = false
     val instantUpdate = true
 
+    implicit val p: TageParams = params
+
+    val TageNTables  = params.TageNTables
+    val UBitPeriod   = params.UBitPeriod
+    val maxHist      = params.maxHist
+    val TableInfo    = params.TableInfo
+    val outPutParams = params.outPutParams
+    val BimEntries   = params.BimEntries
+    val BimRatio     = params.BimRatio
+
+
     var brCount = 0
 
-    val bim = new Bim()
-    val tables = TableInfo.zipWithIndex.map { case((nRows, histLen, tagLen), i) => new TageTable(nRows, histLen, tagLen, UBitPeriod, i) }
-    val ghist = new GlobalHistory(maxHisLen)
 
-    
+    val bim = new Bim(BimEntries, BimRatio)
+
+    val tables = TableInfo.zipWithIndex.map { case((nRows, histLen, tagLen), i) => new TageTable(nRows, histLen, tagLen, UBitPeriod, i) }
+    val ghist = new GlobalHistory(maxHist)
+
 
     class TageMeta(val pc: Long, val histPtr: Int, val pvdr: Int, val pvdrValid: Boolean,
         val altDiff: Boolean, val pvdrU: Int, val pvdrCtr: Int, val alloc: Int,
@@ -359,6 +359,17 @@ class Tage extends BasePredictor with TageParams {
 
     def name: String = "BOOM_TAGE"
     override def toString: String = f"${this.name}%s with params:\n${outPutParams}%s\nUsing global history ${if(updateOnUncond) "with" else "without"}%s jumps\n"
+}
+
+object Tage {
+    def apply(ops: Map[Symbol, Any]): Tage = {
+        if (ops.contains('hislen)) {
+            println(f"max history length set to ${ops('hislen).asInstanceOf[Int]}%d")
+            new Tage(TageParams(maxHist=ops('hislen).asInstanceOf[Int]))
+        }
+        else
+            new Tage
+    }
 }
 
 // object TageTest extends PredictorUtils{
