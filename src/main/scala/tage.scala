@@ -25,7 +25,9 @@ case class TageParams (
                                         (  512,  14),
                                         (  512,  15)),
     val TageBanks: Int = 16, // FetchWidth
-    val UBitPeriod: Int = 4096)
+    val UBitPeriod: Int = 4096,
+    val SuperScalar: Boolean = false,
+    val useGem5: Boolean = false)
 {
     val TableInfo = t.zipWithIndex.map { case((s, ta), i) => {
         val hist = (minHist * pow(maxHist/minHist, i.toDouble / (t.size - 1)) + 0.5).toInt
@@ -49,7 +51,9 @@ case class TageParams (
 abstract class TageComponents()(implicit params: TageParams) extends PredictorComponents {}
 
 class TageTable (val nRows: Int, val histLen: Int, val tagLen: Int, val uBitPeriod: Int, val i: Int)(implicit val p: TageParams) extends TageComponents()(p) {
-    val useGem5 = true
+    val useGem5     = p.useGem5
+    val SuperScalar = p.SuperScalar
+    val TageBanks   = p.TageBanks
     
     
     val tagMask = getMask(tagLen)
@@ -72,14 +76,16 @@ class TageTable (val nRows: Int, val histLen: Int, val tagLen: Int, val uBitPeri
         def decrementU = this.u = satUpdate(false, this.u, 2)
     }
 
-    // val banks: Array[Array[Entry]] = Array.fill[Array[Entry]](TageBanks)(Array.fill[Entry](nRows)(new Entry))
-    val bank: Array[Entry] = Array.fill[Entry](nRows)(new Entry)
+    lazy val tables = Array.fill[Array[Entry]](TageBanks)(Array.fill[Entry](nRows)(new Entry))
+    lazy val table  = Array.fill[Entry](nRows)(new Entry)
+    println(f"size of table(${i}%d): ${table.size}%d")
+
     val idxHist = new FoldedHist(histLen, log2(nRows))
     val tagHist = (0 to 1).map(i => new FoldedHist(histLen, tagLen-i))
     val phist = new PathHistory(30, 2)
 
-    // def flush = {banks.foreach(b => b.foreach(e => e.valid = false))}
-    def flush = bank.foreach(e => e.valid = false)
+    def flush = if (SuperScalar) tables.foreach(b => b.foreach(e => e.valid = false))
+                else             table.foreach(e => e.valid = false)
 
     def ctrUpdate(oldCtr: Int, taken: Boolean): Int = satUpdate(taken, oldCtr, 3)
 
@@ -113,57 +119,47 @@ class TageTable (val nRows: Int, val histLen: Int, val tagLen: Int, val uBitPeri
 
     def getBIT(pc: Long): (Int, Int, Int) = (getBank(pc), getIdx(pc), getTag(pc))
 
-    // def lookUp(pc: Long, mask: Array[Boolean]): Array[TableResp] = {
-    //     val bits = (0 until TageBanks).map(b => getBIT(pc + 2*b))
-    //     val (entries, tags) = bits.map { case (b, i, t) => {/*println(f"b:$b%d, i:$i%d, t$t%d"); */(banks(b)(i), t);} }.unzip
-    //     (entries, tags, mask).zipped.map { case(e, t, m) => new TableResp(e.ctr, e.u, t == e.tag && e.valid && m)}.toArray
-    // }
-
-    // Per-bank lookup
-    // def lookUp(pc: Long): TableResp = {
-    //     lookUp(pc, (0 until TageBanks).map(_ == 0).toArray)(0) // the first bank is the target bank
-    // }
-
-    def lookUp(pc: Long): TableResp = {
-        val idx = getIdx(pc)
-        val tag = getTag(pc)
-        val e = bank(idx)
-        new TableResp(e.ctr, e.u, tag == e.tag && e.valid)
+    def lookUpAllBanks(pc: Long, mask: Array[Boolean]): Array[TableResp] = {
+        val bits = (0 until TageBanks).map(b => getBIT(pc + 2*b))
+        val (entries, tags) = bits.map { case (b, i, t) => (tables(b)(i), t) }.unzip
+        (entries, tags, mask).zipped.map { case(e, t, m) => new TableResp(e.ctr, e.u, t == e.tag && e.valid && m)}.toArray
     }
 
-    // def update(pc: Long, valid: Boolean, taken: Boolean,
-    //     alloc: Boolean, oldCtr: Int, uValid: Boolean, u: Int) = {
-    //     val (bank, idx, tag) = getBIT(pc)
-
-    //     if (valid) {
-    //         banks(bank)(idx).valid = true
-    //         banks(bank)(idx).tag = tag
-    //         banks(bank)(idx).ctr = if (alloc) {if (taken) 4 else 3} else ctrUpdate(oldCtr, taken)
-    //         // printf(f"updating tag of bank $bank%d, idx $idx%d to $tag%x\n")
-    //         // printf(f"updating ctr of bank $bank%d, idx $idx%d to $newCtr%d\n")
-    //     }
-
-    //     if (uValid) {
-    //         banks(bank)(idx).u = u
-    //         // printf(f"updating u of bank $bank%d, idx $idx%d to $u%d\n")
-    //     }
-    // }
+    def lookUp(pc: Long): TableResp = 
+        if (SuperScalar) {
+            lookUpAllBanks(pc, (0 until TageBanks).map(_ == 0).toArray)(0) // the first bank is the target bank
+        } else {
+            val idx = getIdx(pc)
+            val tag = getTag(pc)
+            val e = table(idx)
+            new TableResp(e.ctr, e.u, tag == e.tag && e.valid)
+        }
 
     def update(pc: Long, valid: Boolean, taken: Boolean,
         alloc: Boolean, oldCtr: Int, uValid: Boolean, u: Int) = {
+        val bank = getBank(pc)
         val idx = getIdx(pc)
         val tag = getTag(pc)
 
+
         if (valid) {
-            bank(idx).valid = true
-            bank(idx).tag = tag
-            bank(idx).ctr = if (alloc) {if (taken) 4 else 3} else ctrUpdate(oldCtr, taken)
+            if (SuperScalar) {
+                tables(bank)(idx).valid = true
+                tables(bank)(idx).tag = tag
+                tables(bank)(idx).ctr = if (alloc) {if (taken) 4 else 3} else ctrUpdate(oldCtr, taken)
+            }
+            else {
+                table(idx).valid = true
+                table(idx).tag = tag
+                table(idx).ctr = if (alloc) {if (taken) 4 else 3} else ctrUpdate(oldCtr, taken)
+            }
             // printf(f"updating tag of bank $bank%d, idx $idx%d to $tag%x\n")
             // printf(f"updating ctr of bank $bank%d, idx $idx%d to $newCtr%d\n")
         }
 
         if (uValid) {
-            bank(idx).u = u
+            if (SuperScalar) tables(bank)(idx).u = u
+            else             table(idx).u = u
             // printf(f"updating u of bank $bank%d, idx $idx%d to $u%d\n")
         }
     }
@@ -184,14 +180,11 @@ class TageTable (val nRows: Int, val histLen: Int, val tagLen: Int, val uBitPeri
         update(pc, true, taken, true, 0, true, 0)
     }
 
-    // def decrementU(pc: Long) = {
-    //     val (b, i, t) = getBIT(pc)
-    //     banks(b)(i).decrementU
-    // }
-    
     def decrementU(pc: Long) = {
+        val bank = getBank(pc)
         val idx = getIdx(pc)
-        bank(i).decrementU
+        if (SuperScalar) tables(bank)(i).decrementU
+        else             table(i).decrementU
     }
 }
 
@@ -239,6 +232,8 @@ class Tage(params: TageParams = TageParams()) extends BasePredictor {
     val outPutParams = params.outPutParams
     val BimEntries   = params.BimEntries
     val BimRatio     = params.BimRatio
+    val SuperScalar  = params.SuperScalar
+    val TageBanks    = params.TageBanks
 
 
     var brCount = 0
@@ -246,7 +241,10 @@ class Tage(params: TageParams = TageParams()) extends BasePredictor {
 
     val bim = new Bim(BimEntries, BimRatio)
 
-    val tables = TableInfo.zipWithIndex.map { case((nRows, histLen, tagLen), i) => new TageTable(nRows, histLen, tagLen, UBitPeriod, i) }
+    val tables = TableInfo.zipWithIndex.map { case((nRows, histLen, tagLen), i) => 
+        if (SuperScalar) new TageTable(nRows/TageBanks, histLen, tagLen, UBitPeriod, i)
+        else             new TageTable(nRows, histLen, tagLen, UBitPeriod, i) 
+    }
     val ghist = new GlobalHistory(maxHist)
 
 
@@ -271,6 +269,7 @@ class Tage(params: TageParams = TageParams()) extends BasePredictor {
                 val bimResp: Boolean = bim.lookUp(pc)
                 // printf(f"bimResp: $bimResp%b\n")
 
+                @scala.annotation.tailrec
                 def calRes(tResp: List[TableResp], ti: Int, provided: Boolean, provider: Int,
                     altPred: Boolean, finalAltPred: Boolean, res: Boolean): (Boolean, Int, Boolean, Boolean, Boolean) = {
                     val hit = tResp(0).hit
@@ -311,7 +310,11 @@ class Tage(params: TageParams = TageParams()) extends BasePredictor {
         if (isBr || updateOnUncond) predictMetas.enqueue(meta)
         if (isBr) brCount += 1
         // if (brCount % UBitPeriod == 0) tables.foreach(t => t.banks.foreach(b => b.foreach(e => e.decrementU )))
-        if (brCount % UBitPeriod == 0) tables.foreach(t => t.bank.foreach(e => e.decrementU))
+        if (brCount % UBitPeriod == 0) {
+            if (SuperScalar) tables.foreach(t => t.tables.foreach(b => b.foreach(e => e.decrementU )))
+            else             tables.foreach(t => t.table.foreach(e => e.decrementU))
+        }
+            
         res
     }
     
@@ -363,14 +366,41 @@ class Tage(params: TageParams = TageParams()) extends BasePredictor {
 
 object Tage {
     // This is a factory method to produce Tage instances according to passed option
-    def apply(ops: Map[Symbol, Any]): Tage = {
-        if (ops.contains('hislen)) {
-            println(f"max history length set to ${ops('hislen).asInstanceOf[Int]}%d")
-            new Tage(TageParams(maxHist=ops('hislen).asInstanceOf[Int]))
+    def apply(ops: Map[Symbol, Any]): Tage = new Tage(wrapParams(ops, TageParams()))
+
+    @scala.annotation.tailrec
+    def wrapParams(ops: Map[Symbol, Any], p: TageParams = TageParams()): TageParams = 
+        ops match {
+            case o if (o.isEmpty) => p
+            case o if (o.contains('hislen)) => {
+                println(f"max history length set to ${ops('hislen).asInstanceOf[Int]}%d")
+                wrapParams(ops - 'hislen, p.copy(maxHist=ops('hislen).asInstanceOf[Int]))
+            }
+            case o if (o.contains('superscalar)) => {
+                println(f"tables set to superscalar")
+                wrapParams(ops - 'superscalar, p.copy(SuperScalar=true))
+            }
+            case o if (o.contains('updateOnUncond)) => {
+                println(f"updating history on unconditional jumps")
+                wrapParams(ops - 'updateOnUncond, p.copy()) // TODO: implement this case
+            }
+            case o if (o.contains('useGem5)) => {
+                println(f"Using gem5 inde")
+                wrapParams(ops - 'useGem5, p.copy(useGem5=true))
+            }
+            case o if (o.contains('useXS)) => {
+                println(f"Using XS params")
+                val xst: Seq[Tuple2[Int, Int]]  = Seq(( 2048,   7),
+                                                      ( 2048,   7),
+                                                      ( 4096,   8),
+                                                      ( 4096,   8),
+                                                      ( 2048,   9),
+                                                      ( 2048,   9))
+                wrapParams(ops - 'useXS, p.copy(useGem5=false, t=xst, SuperScalar=true, minHist=2, maxHist=64))
+            }
+            case _ => 
+                wrapParams(Map(), p)
         }
-        else
-            new Tage
-    }
 }
 
 // object TageTest extends PredictorUtils{

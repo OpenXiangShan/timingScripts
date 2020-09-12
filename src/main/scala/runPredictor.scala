@@ -24,6 +24,7 @@ trait ArgParser {
         if (args.length == 0) println(usage)
         val arglist = args.toList
 
+        @scala.annotation.tailrec
         def nextOption(map : OptionMap, list: List[String]) : OptionMap = {
             def isSwitch(s : String)= (s(0) == '-')
             def fileToPathInDebug(file: String) = "/home/glr/XiangShan/debug/" + file + ".log"
@@ -39,6 +40,12 @@ trait ArgParser {
                     nextOption(map ++ Map('updateOnUncond -> true), tail)
                 case "--withLoop" :: tail =>
                     nextOption(map ++ Map('withLoop -> true), tail)
+                case "--superscalar" :: tail =>
+                    nextOption(map ++ Map('superscalar -> true), tail)
+                case "--useGem5" :: tail =>
+                    nextOption(map ++ Map('useGem5 -> true), tail)
+                case "--useXS" :: tail =>
+                    nextOption(map ++ Map('useXS -> true), tail)
                 // case string :: opt2 :: tail if isSwitch(opt2) => 
                 //                     nextOption(map ++ Map('infile -> string), list.tail)
                 // case string :: Nil =>  nextOption(map ++ Map('infile -> string), list.tail)
