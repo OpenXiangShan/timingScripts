@@ -52,7 +52,7 @@ trait PredictorUtils {
 
 abstract class BasePredictor extends PredictorUtils {
     def predict(pc: Long, isBr: Boolean): Boolean
-    def update(pc: Long, taken: Boolean, pred: Boolean): Unit
+    def update(pc: Long, taken: Boolean): Boolean
     def updateUncond(pc: Long): Unit
     def flush: Unit
     def name: String
@@ -86,30 +86,34 @@ class GlobalHistory(val maxHisLen: Int) extends PredictorUtils {
         ptr = if (ptr + 1 >= arrMaxLen) 0 else ptr + 1
     }
 
-    def recover(oldPtr: Int, taken: Boolean) = {
+    def recover(oldPtr: Int) = {
         ptr = oldPtr
-        updateHist(taken)
     }
 }
 
 class FoldedHist(val totalLen: Int, val compLen: Int) extends PredictorUtils {
     var comp: Int = 0
     val outPoint: Int = totalLen % compLen
+    val mask = getMask(compLen)
     def toInt(b: Boolean) = if (b) 1 else 0
     def update(hNew: Boolean, hOld: Boolean): Unit = {
         comp = (comp << 1) | toInt(hNew)
         comp ^= toInt(hOld) << outPoint // evict bit
         comp ^= comp >>> compLen        // this highset bit is xored into new hist bit
-        comp &= (1 << compLen) - 1
+        comp &= mask
+    }
+    def recover(old: Int) = {
+        comp = old & mask
     }
     def apply(): Int = this.comp
     override def toString(): String = f"totalLen:$totalLen%d, foldedLen:$compLen%d, foldedHist:${boolArrayToString(toBoolArray(comp, compLen))}%s"
 }
 
 class PathHistory(val len: Int, val selPos: Int = 2) extends PredictorUtils {
-    var p = 0
+    var p: Int = 0
     val mask = getMask(len)
-    def update(pc: Long): Unit = p = ((p << 1) | (getBit(pc, selPos) >>> selPos)) & mask
+    def update(pc: Long): Unit = p = (((p << 1) | (getBit(pc, selPos) >>> selPos)) & mask).toInt
+    def recover(old: Int): Unit = p = old & mask
     def apply() = p
     override def toString(): String = f"pathLen:$len%d, pathHist:${boolArrayToString(toBoolArray(p, len))}%s"
 }

@@ -2,6 +2,8 @@ package scalaTage
 
 import scala.collection.mutable
 import scala.util.matching.Regex
+import scala.collection.immutable.Queue
+import scala.collection.immutable.HashMap
 // import scala.collection.immutable._
 import scala.math._
 import scala.util._
@@ -24,10 +26,10 @@ trait ArgParser {
         if (args.length == 0) println(usage)
         val arglist = args.toList
 
+        def fileToPathInDebug(file: String) = "/home/glr/XiangShan/debug/" + file + ".log"
         @scala.annotation.tailrec
         def nextOption(map : OptionMap, list: List[String]) : OptionMap = {
             def isSwitch(s : String)= (s(0) == '-')
-            def fileToPathInDebug(file: String) = "/home/glr/XiangShan/debug/" + file + ".log"
             list match {
                 case Nil => map
                 case "--log-in-debug" :: file :: tail => 
@@ -46,13 +48,19 @@ trait ArgParser {
                     nextOption(map ++ Map('useGem5 -> true), tail)
                 case "--useXS" :: tail =>
                     nextOption(map ++ Map('useXS -> true), tail)
+                case "--realOrder" :: tail =>
+                    nextOption(map ++ Map('useRealOrder -> true), tail)
                 // case string :: opt2 :: tail if isSwitch(opt2) => 
                 //                     nextOption(map ++ Map('infile -> string), list.tail)
                 // case string :: Nil =>  nextOption(map ++ Map('infile -> string), list.tail)
                 case option :: tail => { println("Unknown option "+option); nextOption(map, list.tail); }
             }
         }
-        nextOption(Map(),arglist)
+        val ops = nextOption(Map(),arglist)
+        // if (!ops.contains('file))
+        //     ops ++ Map('file -> fileToPathInDebug("dhrystone"))
+        // else
+            ops
     }
 }
 
@@ -62,55 +70,148 @@ trait RunnerUtils {
 }
 
 
-class BranchPredictorRunner extends RunnerUtils with ArgParser {
+class BranchPredictorRunner(realOrder: Boolean = false) extends RunnerUtils with ArgParser {
     val tw = new TraceWrapper
 
     val maxBrPrint = 10
 
     val defaultInput = "/home/glr/XiangShan/debug/dhrystone.log"
+    
+    //                    pc  , (mis, cor)
+    type Stats = HashMap [Long, List[Int]]
 
-    def getCfis(file: String): Iterator[Any] = tw.getCFIInfosFromFile(file)
+    case class UpdateQueueElem(cycle: Long, isBr: Boolean, pc: Long, taken: Boolean, misPred: Boolean) {}
+    case class PcycleQueueElem(pcycle: Long, pc: Long, isBr: Boolean) {}
+    
+    type UpdateQ = Queue[UpdateQueueElem]
+    type PcycleQ = Queue[PcycleQueueElem]
 
-    def runWithCFIInfo(cfis: Iterator[Any])(implicit bp: BasePredictor) = {     
-        //                               pc  , (mis, cor)
-        val stats = new mutable.HashMap [Long, Array[Int]] 
-        cfis.foreach { cfi => cfi match {
-            case CFIInfo(isBr, pc, taken, misPred) => {
+
+    def getCfiPreds(file: String): Iterator[Any]   = tw.getCFIPredInfosFromFile(file)
+    def getCfiUpdates(file: String): Iterator[Any] = tw.getCFIUpdateInfosFromFile(file)
+
+    def getAndPrintPreds(stats: Stats): (Int, Int, Int) = {
+        var brPrint = 0
+        var totalPred = 0
+        var totalMiss = 0
+        var totalCorr = 0
+        stats.toList.sortBy(_._2(0)).reverse.foreach{ case(pc, arr) => {
+            val miss = arr(0)
+            val corr = arr(1)
+            if (brPrint < maxBrPrint) { println(f"pc: $pc%x, mispredict: ${miss}%10d, correct: ${corr}%10d, total: ${miss+corr}%10d, missrate: ${miss*100/(miss+corr).toDouble}%3.2f%%"); brPrint += 1; }
+            totalMiss += arr(0)
+            totalCorr += arr(1)
+            totalPred += arr.reduce(_+_)
+        }}
+        (totalMiss, totalCorr, totalPred)
+    }
+    
+    @scala.annotation.tailrec
+    private def consumeCFI(stats: Stats, it: Iterator[Any])(implicit bp: BasePredictor): Stats = {
+        if (it.hasNext) {
+            it.next() match {
+                case CFIUpdateInfo(cycle, isBr, pc, taken, misPred, pcycle, _) => {
                     // we only care about branches
-                    val pred = bp.predict(pc, isBr)
+                    bp.predict(pc, isBr)
                     if (isBr) {
-                        bp.update(pc, taken, pred)
-                        if (taken != pred) {
-                            if (stats.contains(pc)) stats(pc)(0) += 1
-                            else stats += (pc -> Array(1, 0))
-                        }
-                        else {
-                            if (stats.contains(pc)) stats(pc)(1) += 1
-                            else stats += (pc -> Array(0, 1))
-                        }
-                    } else {
+                        val pred = bp.update(pc, taken)
+                        val l = 
+                            if (taken != pred) {
+                                if (stats.contains(pc)) List(stats(pc)(0) + 1, stats(pc)(1))
+                                else List(1, 0)
+                            }
+                            else {
+                                if (stats.contains(pc)) List(stats(pc)(0), stats(pc)(1) + 1)
+                                else List(0, 1)
+                            }
+                        consumeCFI(stats + ((pc, l)), it)
+                    }
+                    else {
                         bp.updateUncond(pc)
+                        consumeCFI(stats, it)
                     }
                 }
-            case _ => 
+                case _ => consumeCFI(stats, it)
             }
         }
+        else stats
+    }
 
-        def getAndPrintPreds(stats: mutable.HashMap [Long, Array[Int]]): (Int, Int, Int) = {
-            var brPrint = 0
-            var totalPred = 0
-            var totalMiss = 0
-            var totalCorr = 0
-            stats.toList.sortBy(_._2(0)).reverse.foreach{ case(pc, arr) => {
-                val miss = arr(0)
-                val corr = arr(1)
-                if (brPrint < maxBrPrint) { println(f"pc: $pc%x, mispredict: ${miss}%10d, correct: ${corr}%10d, total: ${miss+corr}%10d, missrate: ${miss*100/(miss+corr).toDouble}%3.2f%%"); brPrint += 1; }
-                totalMiss += arr(0)
-                totalCorr += arr(1)
-                totalPred += arr.reduce(_+_)
-            }}
-            (totalMiss, totalCorr, totalPred)
+    @scala.annotation.tailrec
+    private def consumeCFI(updateQ: UpdateQ, pcycleQ: PcycleQ, predCycle: Long, stats: Stats, it: Iterator[Any])(implicit bp: BasePredictor): Stats = {
+        def updateEnd = !it.hasNext
+        @scala.annotation.tailrec
+        def updateEnq(uQ: UpdateQ, pQ: PcycleQ, n: Int): (UpdateQ, PcycleQ) = {
+            if (it.hasNext && n > 0) {
+                it.next() match {
+                    case CFIUpdateInfo(cycle, isBr, pc, taken, misPred, pcycle, _) => {
+                        // println(f"update enqueue: cycle($cycle%d) pcycle($pcycle%d)")
+                        updateEnq(uQ.enqueue(UpdateQueueElem(cycle, isBr, pc, taken, misPred)),
+                            pQ.enqueue(PcycleQueueElem(pcycle, pc, isBr)), n-1)
+                    }
+                    case _ => {
+                        // println("unexpected cfi_update!!\n")
+                        updateEnq(uQ, pQ, n)
+                    }
+                }
+            }
+            else (uQ, pQ)
         }
+
+        def qmaxlen = 50
+        val (uQ, pQ) = if (pcycleQ.isEmpty) updateEnq(updateQ, pcycleQ, qmaxlen) else (updateQ, pcycleQ)
+
+        def pHeadCycle = pQ.head.pcycle
+        def uHeadCycle = uQ.head.cycle
+
+        // println(f"pred cycle:${predCycle}%d, update cycle:${uHeadCycle}%d, pcy cycle:${pcyHeadCycle}%d")
+        if (pQ.isEmpty) {
+            stats
+        }
+        else if (pHeadCycle > uHeadCycle) {
+            // Update the predictor
+            val (uInfo, newuQ) = uQ.dequeue
+            val taken = uInfo.taken
+            val pc = uInfo.pc
+            // println(f"phead($pHeadCycle%d) > uhead($uHeadCycle%d), updating predictor pc($pc%x)")
+            if (uInfo.isBr) {
+                val pred = bp.update(pc, taken)
+                val l = 
+                    if (taken != pred) {
+                        if (stats.contains(pc)) List(stats(pc)(0) + 1, stats(pc)(1))
+                        else List(1, 0)
+                    }
+                    else {
+                        if (stats.contains(pc)) List(stats(pc)(0), stats(pc)(1) + 1)
+                        else List(0, 1)
+                    }
+                consumeCFI(newuQ, pQ, predCycle, stats + ((pc, l)), it)
+            }
+            else {
+                bp.updateUncond(pc)
+                consumeCFI(newuQ, pQ, predCycle, stats, it)
+            }
+        }
+        else {
+            if (predCycle <= pHeadCycle) {
+                val (p, newPcycleQ) = pQ.dequeue
+                // println(f"pcycle(${pHeadCycle}%d), predict pc(${p.pc}%x) and drop")
+                bp.predict(p.pc, p.isBr)
+                consumeCFI(uQ, newPcycleQ, pHeadCycle, stats, it)
+            } else {
+                // println(f"Predcycle(${predCycle}) > PcycleQ head cycle(${pHeadCycle}), dropping the PcycleQ head")
+                consumeCFI(uQ, pQ.dequeue._2, predCycle, stats, it)
+            }
+        }
+    }
+
+    def runWithCFIInfo(cfis: Iterator[Any])(implicit bp: BasePredictor) = {
+        val emptyStats = HashMap[Long, List[Int]]()
+        val uQ  = Queue[UpdateQueueElem]()
+        val pQ  = Queue[PcycleQueueElem]()
+
+        val stats = if (realOrder) consumeCFI(uQ, pQ, 0, emptyStats, cfis) else consumeCFI(emptyStats, cfis)
+
         println(f"Printing top $maxBrPrint%d mispredicted branches:")
 
         val (totalMispred, totalCorrect, totalBrs) = getAndPrintPreds(stats)
@@ -127,7 +228,8 @@ class BranchPredictorRunner extends RunnerUtils with ArgParser {
         val l = new File(log)
         if (l.exists()) {
             println(s"processing log $l")
-            (log, runWithCFIInfo(getCfis(log)))
+            // (log, runWithCFIInfo(getCfiPreds(log), getCfiUpdates(log)))
+            (log, runWithCFIInfo(getCfiUpdates(log)))
         }
         else {
             println(s"$l not exists, returning null result")
@@ -156,16 +258,20 @@ class BranchPredictorRunner extends RunnerUtils with ArgParser {
         checkOps(ops)
         val res = 
             if (ops.contains('file)) {
+                tw.getXSResult(ops('file).toString)
                 Array(runWithLog(ops('file).toString))
             }
             else if (ops.contains('multipleFiles)) {
-                runWithLogs(ops('multipleFiles).asInstanceOf[Array[String]])
+                val files = ops('multipleFiles).asInstanceOf[Array[String]]
+                files.foreach(tw.getXSResult(_))
+                runWithLogs(files)
             }
             else {
                 println("No input specified, running on default dhrystone\n")
                 Array(runWithLog(defaultInput))
             }
         printRes(res)
+        
     }
 }
 
@@ -176,7 +282,8 @@ class BranchPredictorRunner extends RunnerUtils with ArgParser {
 object BranchPredictorRunnerTest extends RunnerUtils with ArgParser {
     def main(args: Array[String]): Unit = {
         val options = parse(args)
-        val bpr = new BranchPredictorRunner
+        val bpr = if (options.contains('useRealOrder)) new BranchPredictorRunner(true)
+                  else new BranchPredictorRunner()
         bpr.run(options)
     }
 }
