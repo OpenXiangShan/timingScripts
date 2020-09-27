@@ -118,6 +118,12 @@ class PathHistory(val len: Int, val selPos: Int = 2) extends PredictorUtils {
     override def toString(): String = f"pathLen:$len%d, pathHist:${boolArrayToString(toBoolArray(p, len))}%s"
 }
 
+case class SatCounter(val bits: Int, val ctr: Int) extends PredictorUtils {
+    def initVal = 1 << (bits-1)
+    def update(inc: Boolean) = this.copy(ctr = satUpdate(inc, this.ctr, this.bits))
+    def apply() = ctr - initVal
+}
+
 trait GTimer {
     var cycle: Long = 0
     def step(x: Long) = cycle += x

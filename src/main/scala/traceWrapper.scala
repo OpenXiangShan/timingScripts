@@ -89,7 +89,7 @@ class TraceWrapper() extends PredictorUtils {
                 }
                 else {
                     if (misp)
-                        numJMispred += 0
+                        numJMispred += 1
                 }
             }
             case _ =>

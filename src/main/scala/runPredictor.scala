@@ -253,7 +253,7 @@ class BranchPredictorRunner(realOrder: Boolean = false) extends RunnerUtils with
     }
 
     def run(ops: OptionMap) = {
-        implicit val bp = Tage(ops)
+        implicit val bp = if (false) Tage(ops) else PerceptronBP(ops)
         println(f"Running with ${bp}%s")
         checkOps(ops)
         val res = 
