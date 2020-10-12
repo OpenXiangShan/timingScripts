@@ -164,8 +164,6 @@ class TraceWrapper() extends PredictorUtils with FileIOUtils {
     }
 
     def checkPredHist(file: String) = {
-        // val cfi_update = getCFIUpdateInfosFromFile("/home/glr/XiangShan/debug/coremark_update.log")
-        // val cfi_pred = getCFIPredInfosFromFile("/home/glr/XiangShan/debug/coremark_pred.log")
         // in case multiple brs are predicted
         var br_count = 0
         var incorrect = 0
@@ -229,17 +227,33 @@ class TraceWrapper() extends PredictorUtils with FileIOUtils {
 
     def checkUpdateCycle(file: String) = {
         readFile[Unit](file, s => {
-            val cfi_update = getCFIUpdateInfosFromFile(file)
+            val cfi_update = getCFIUpdateInfosFromSource(s)
             var c: Long = 0
             cfi_update.foreach {
                 case CFIUpdateInfo(cycle, isBr, _, _, misp, pcycle, hist) => {
                     if (pcycle < c) {
-                        println(f"disoreder detected at cycle $cycle")
+                        println(f"disorder detected at cycle $cycle")
                     }
                     c = pcycle
                 }
                 case _ =>
             }
+        })
+    }
+
+    def transformLogToCsv(file: String) = {
+        readFile[Unit](file, s => {
+            val cfi_update = getCFIUpdateInfosFromSource(s)
+            writeToFile("/home/glr/scalaTage/branch_record/test.csv", w => {
+                cfi_update.foreach {
+                    // _ => w.write("yes")
+                    case CFIUpdateInfo(_, isBr, pc, taken, _, _, _) => {
+                        // print("%x,%d,%d\n".format(pc, taken, isBr) )
+                        w.write(f"$pc%x,${if(taken) 1 else 0}%d,${if(isBr) 1 else 0}%d\n")
+                    }
+                    case _ =>
+                }
+            })
         })
     }
 

@@ -230,7 +230,6 @@ class BranchPredictorRunner(realOrder: Boolean = false) extends RunnerUtils with
         val l = new File(log)
         if (l.exists()) {
             println(s"processing log $l")
-            // (log, runWithCFIInfo(getCfiPreds(log), getCfiUpdates(log)))
             val res = readFile[(Int, Int)](log, s => runWithCFIInfo(getCfiUpdates(s))).getOrElse((1,1))
             (log, res)
         }
