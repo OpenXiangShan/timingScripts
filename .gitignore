@@ -3,6 +3,7 @@ test_run_dir/*
 target/*
 project/target/*
 target/.history
+branch_record/*
 ### XilinxISE template
 # intermediate build files
 *.bgn
