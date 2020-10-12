@@ -6,9 +6,9 @@ import scala.math._
 import scala.util._
 
 case class PerceptronParams (
-    val row: Int = 512,
-    val hislen: Int = 60,
-    val ctrbits: Int = 9
+    val row: Int = 1024,
+    val hislen: Int = 50,
+    val ctrbits: Int = 8
 ) {
     val col = hislen
     val threshold = (1.93 * hislen + 14).toInt
@@ -18,6 +18,8 @@ case class PerceptronParams (
 }
 
 class PerceptronBP()(implicit val p: PerceptronParams) extends BasePredictor {
+    override val updateOnUncond = true
+
     val row       = p.row
     val col       = p.col
     val hislen    = p.hislen
@@ -40,14 +42,14 @@ class PerceptronBP()(implicit val p: PerceptronParams) extends BasePredictor {
 
     val obq = new mutable.Queue[PerceptronMeta]
 
-    def getRow(pc: Long): Int = ((pc >>> 1) & rowMask).toInt
+    def getRow(pc: Long): Int = ((pc >>> 1) % row).toInt
 
     def dotProduct(hist: List[Boolean], ctrs: List[SatCounter]): Int = {
-        (hist zip ctrs) map { case (h, v) => if (h) v() else -v() } reduce (_+_)
+        (hist zip ctrs) map { case (h, v) => v(h) } reduce (_+_)
     }
 
     def predict(pc: Long, isBr: Boolean): Boolean = {
-        if (isBr) {
+        if (isBr || updateOnUncond) {
             val r = getRow(pc)
             val hist = ghist.getHist().toList
             val predSum = dotProduct(hist, mem(r).toList) + bias(r)()
@@ -69,7 +71,7 @@ class PerceptronBP()(implicit val p: PerceptronParams) extends BasePredictor {
             val r = getRow(pc)
             if (misPred || abs(meta.predSum) <= threshold) {
                 bias(r) = bias(r).update(taken)
-                mem(r) = (meta.hist zip mem(getRow(pc)).toList) map { case (h, v) => v.update(h == taken) } toArray
+                mem(r) = (meta.hist zip mem(r).toList) map { case (h, v) => v.update(h == taken) } toArray
             }
             ghist.updateHist(taken)
         }

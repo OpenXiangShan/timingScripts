@@ -121,7 +121,8 @@ class PathHistory(val len: Int, val selPos: Int = 2) extends PredictorUtils {
 case class SatCounter(val bits: Int, val ctr: Int) extends PredictorUtils {
     def initVal = 1 << (bits-1)
     def update(inc: Boolean) = this.copy(ctr = satUpdate(inc, this.ctr, this.bits))
-    def apply() = ctr - initVal
+    def apply(): Int = ctr - initVal
+    def apply(h: Boolean): Int = if (h) apply() else -apply()
 }
 
 trait GTimer {
