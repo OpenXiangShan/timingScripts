@@ -70,7 +70,7 @@ trait RunnerUtils {
 }
 
 
-class BranchPredictorRunner(realOrder: Boolean = false) extends RunnerUtils with ArgParser {
+class BranchPredictorRunner(realOrder: Boolean = false) extends RunnerUtils with ArgParser with FileIOUtils {
     val tw = new TraceWrapper
 
     val maxBrPrint = 10
@@ -87,8 +87,10 @@ class BranchPredictorRunner(realOrder: Boolean = false) extends RunnerUtils with
     type PcycleQ = Queue[PcycleQueueElem]
 
 
-    def getCfiPreds(file: String): Iterator[Any]   = tw.getCFIPredInfosFromFile(file)
-    def getCfiUpdates(file: String): Iterator[Any] = tw.getCFIUpdateInfosFromFile(file)
+    def getCfiPreds(s: scala.io.BufferedSource): Iterator[Any]   = tw.getCFIPredInfosFromSource(s)
+    def getCfiUpdates(s: scala.io.BufferedSource): Iterator[Any] = tw.getCFIUpdateInfosFromSource(s)
+
+    def dumbCFI = CFIUpdateInfo(0, false, 0, false, false, 0, 0)
 
     def getAndPrintPreds(stats: Stats): (Int, Int, Int) = {
         var brPrint = 0
@@ -229,7 +231,8 @@ class BranchPredictorRunner(realOrder: Boolean = false) extends RunnerUtils with
         if (l.exists()) {
             println(s"processing log $l")
             // (log, runWithCFIInfo(getCfiPreds(log), getCfiUpdates(log)))
-            (log, runWithCFIInfo(getCfiUpdates(log)))
+            val res = readFile[(Int, Int)](log, s => runWithCFIInfo(getCfiUpdates(s))).getOrElse((1,1))
+            (log, res)
         }
         else {
             println(s"$l not exists, returning null result")
@@ -253,7 +256,7 @@ class BranchPredictorRunner(realOrder: Boolean = false) extends RunnerUtils with
     }
 
     def run(ops: OptionMap) = {
-        implicit val bp = if (false) Tage(ops) else PerceptronBP(ops)
+        implicit val bp = if (true) Tage(ops) else PerceptronBP(ops)
         println(f"Running with ${bp}%s")
         checkOps(ops)
         val res = 

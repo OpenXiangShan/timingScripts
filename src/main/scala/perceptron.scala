@@ -71,7 +71,8 @@ class PerceptronBP()(implicit val p: PerceptronParams) extends BasePredictor {
             val r = getRow(pc)
             if (misPred || abs(meta.predSum) <= threshold) {
                 bias(r) = bias(r).update(taken)
-                mem(r) = (meta.hist zip mem(r).toList) map { case (h, v) => v.update(h == taken) } toArray
+                def updateArray(e : (Boolean, SatCounter)): SatCounter = e._2.update(e._1 == taken)
+                mem(r) = ((meta.hist zip mem(r).toList) map {updateArray(_)}).toArray
             }
             ghist.updateHist(taken)
         }
