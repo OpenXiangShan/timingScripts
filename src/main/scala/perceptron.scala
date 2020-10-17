@@ -6,7 +6,7 @@ import scala.math._
 import scala.util._
 
 case class PerceptronParams (
-    val row: Int = 1024,
+    val row: Int = 256,
     val hislen: Int = 50,
     val ctrbits: Int = 8
 ) {
@@ -38,7 +38,7 @@ class PerceptronBP()(implicit val p: PerceptronParams) extends BasePredictor {
         val hist: List[Boolean],
         val pred: Boolean,
         val predSum: Int
-    )
+    ) extends PredictionMeta {}
 
     val obq = new mutable.Queue[PerceptronMeta]
 

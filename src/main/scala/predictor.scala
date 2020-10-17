@@ -7,13 +7,19 @@ import scala.util._
 
 
 trait PredictorUtils {
-    def satUpdate(taken: Boolean, oldCtr: Int, ctrBits: Int): Int = {
-        oldCtr match {
-            case x if (x >= ((1 << ctrBits) - 1) && taken) => (1 << ctrBits) - 1
-            case y if (y <= 0 && !taken) => 0
+    def satUpdate(taken: Boolean, oldCtr: Int, ctrBits: Int, signed: Boolean = false): Int = {
+        val maxVal = if (signed)  (1 << (ctrBits - 1)) - 1 else (1 << ctrBits) - 1
+        val minVal = if (signed) -(1 << (ctrBits - 1))     else 0
+        // println(f"ctrBits $ctrBits%d, maxVal $maxVal%d, minVal $minVal%d")
+        val newCtr = oldCtr match {
+            case x if (x >= maxVal && taken) => maxVal
+            case y if (y <= minVal && !taken) => minVal
             case _ => if (taken) {oldCtr + 1} else {oldCtr - 1}
         }
+        // println(f"old $oldCtr%d -> new $newCtr%d")
+        newCtr
     }
+
     def isPowerOf2(x: Int): Boolean = (x & (x - 1)) == 0
     def log2(x: Int): Int = (log(x) / log(2)).toInt
     def log2Up(x: Int): Int = if (isPowerOf2(x)) log2(x) else log2(x) + 1
@@ -59,6 +65,10 @@ abstract class BasePredictor extends PredictorUtils {
     val debug = false
     val updateOnUncond = false
     def Debug(info: String) = if (this.debug) println(info)
+
+    abstract class PredictionMeta {}
+    val obq: mutable.Queue[_ <: PredictionMeta]
+    val ghist: GlobalHistory
 }
 
 abstract class PredictorComponents extends PredictorUtils {}
@@ -93,7 +103,7 @@ class GlobalHistory(val maxHisLen: Int) extends PredictorUtils {
 
 class FoldedHist(val totalLen: Int, val compLen: Int) extends PredictorUtils {
     var comp: Int = 0
-    val outPoint: Int = totalLen % compLen
+    val outPoint: Int = if (compLen > 0) totalLen % compLen else 0
     val mask = getMask(compLen)
     def toInt(b: Boolean) = if (b) 1 else 0
     def update(hNew: Boolean, hOld: Boolean): Unit = {
@@ -118,11 +128,15 @@ class PathHistory(val len: Int, val selPos: Int = 2) extends PredictorUtils {
     override def toString(): String = f"pathLen:$len%d, pathHist:${boolArrayToString(toBoolArray(p, len))}%s"
 }
 
-case class SatCounter(val bits: Int, val ctr: Int) extends PredictorUtils {
+case class SatCounter(val bits: Int, val ctr: Int, val signed: Boolean = false) extends PredictorUtils {
     def initVal = 1 << (bits-1)
-    def update(inc: Boolean) = this.copy(ctr = satUpdate(inc, this.ctr, this.bits))
-    def apply(): Int = ctr - initVal
+    def update(inc: Boolean) = this.copy(ctr = satUpdate(inc, this.ctr, this.bits, signed))
+    def apply(): Int = if (signed) ctr else ctr - initVal
     def apply(h: Boolean): Int = if (h) apply() else -apply()
+    def saturatedPos: Int = if (signed) (1 << (bits - 1)) - 1 else (1 << bits) - 1
+    def saturatedNeg: Int = if (signed) -(1 << (bits - 1))    else 0
+    def isSaturatedPos(): Boolean = ctr == saturatedPos
+    def isSaturatedNeg(): Boolean = ctr == saturatedNeg
 }
 
 trait GTimer {
