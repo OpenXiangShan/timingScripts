@@ -105,12 +105,15 @@ class FoldedHist(val totalLen: Int, val compLen: Int) extends PredictorUtils {
     var comp: Int = 0
     val outPoint: Int = if (compLen > 0) totalLen % compLen else 0
     val mask = getMask(compLen)
+    // println(this)
     def toInt(b: Boolean) = if (b) 1 else 0
     def update(hNew: Boolean, hOld: Boolean): Unit = {
+        val temp = comp
         comp = (comp << 1) | toInt(hNew)
         comp ^= toInt(hOld) << outPoint // evict bit
         comp ^= comp >>> compLen        // this highset bit is xored into new hist bit
         comp &= mask
+        // println(f"$this%s, outPoint $outPoint%d, oldHist${boolArrayToString(toBoolArray(temp, compLen))}%s, hNew $hNew, hOld $hOld")
     }
     def recover(old: Int) = {
         comp = old & mask
