@@ -56,15 +56,19 @@ trait PredictorUtils {
 
 }
 
-abstract class BasePredictor extends PredictorUtils {
+trait LogHelper {
+    val debug = false
+    def Debug(cond: Boolean, info: String): Unit = if (cond) println(info)
+    def Debug(info: String): Unit = Debug(debug, info)
+}
+
+abstract class BasePredictor extends PredictorUtils with LogHelper {
     def predict(pc: Long, isBr: Boolean): Boolean
     def update(pc: Long, taken: Boolean): Boolean
     def updateUncond(pc: Long): Unit
     def flush: Unit
     def name: String
-    val debug = false
     val updateOnUncond = false
-    def Debug(info: String) = if (this.debug) println(info)
 
     abstract class PredictionMeta {}
     val obq: mutable.Queue[_ <: PredictionMeta]

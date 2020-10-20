@@ -54,27 +54,41 @@ abstract class TageComponents()(implicit params: TageParams) extends PredictorCo
 class SCTable(val numRows: Int, val ctrBits: Int, val histLen: Int) extends PredictorComponents {
     lazy val scTable = Array.fill[Array[SatCounter]](numRows)(Array.fill[SatCounter](2)(SatCounter(ctrBits, 0, signed=true)))
     val rowMask = getMask(log2Up(numRows))
-    def getIdx(pc: Long, hist: Int): Int = ((pc >>> 1) & rowMask).toInt ^ hist
+
+    var debugIdx: Int = 0
+    def getIdx(pc: Long, hist: Int): Int = ((pc >>> 2) & rowMask).toInt ^ hist
     def lookup(pc: Long, hist: Int): List[Int] = {
         val idx = getIdx(pc, hist)
-        scTable(idx).map(_()).toList
+        val res = scTable(idx).map(_()).toList
+        println(f"idx $idx, res $res")
+        debugIdx = idx
+        res
     }
     def update(idx: Int, tageTaken: Boolean, predCorr: Boolean): Unit = {
         val subIdx = if (tageTaken) 1 else 0
         scTable(idx)(subIdx) = scTable(idx)(subIdx).update(predCorr)
     }
-    def update(pc: Long, hist: Int, tageTaken: Boolean, predCorr: Boolean): Unit =
-        update(getIdx(pc, hist), tageTaken, predCorr)
+    def update(pc: Long, hist: Int, tageTaken: Boolean, predCorr: Boolean): Unit = {
+        val idx = getIdx(pc, hist)
+        assert(debugIdx == idx)
+        update(idx, tageTaken, predCorr)
+    }
 }
 
-case class SCThreshold(val threshold: Int, val tc: SatCounter = SatCounter(6, 0, signed=true)) {
-    def initialThres: Int = 10 // to be validated
-    val tcBit = 6
+case class SCThreshold(val threshold: Int, val tc: SatCounter = SatCounter(5, 0, signed=true)) {
+    def initialThres: Int = 32 // to be validated
     def apply() = this.threshold
     def update(cause: Boolean): SCThreshold = {
+        println(f"Updating TC because of ${if (cause) "mis_reverted" else "below threshold"}")
         val newTC = tc.update(cause)
-        if (newTC.isSaturatedPos) this.copy(tc=SatCounter(tcBit, 0, signed=true), threshold=this.threshold+1)
-        else if (newTC.isSaturatedNeg) this.copy(tc=SatCounter(tcBit, 0, signed=true), threshold=this.threshold-1)
+        if (newTC.isSaturatedPos) {
+            println(f"threshold incremented")
+            this.copy(tc=this.tc.copy(ctr=0), threshold=this.threshold+1)
+        }
+        else if (newTC.isSaturatedNeg) {
+            println(f"threshold decremented")
+            this.copy(tc=this.tc.copy(ctr=0), threshold=this.threshold-1)
+        } 
         else this.copy(tc=newTC)
     }
 }
@@ -170,8 +184,6 @@ class TageTable (val numRows: Int, val histLen: Int, val tagLen: Int, val uBitPe
             targetEntry.tag   = tag
             targetEntry.ctr   = newCtr
             // println(f"${if (alloc) "Allocating" else "Updating"}%s entry $idx of table $i, tag is $tag%x, ctr is $newCtr")
-            // printf(f"updating tag of bank $bank%d, idx $idx%d to $tag%x\n")
-            // printf(f"updating ctr of bank $bank%d, idx $idx%d to $newCtr%d\n")
         }
 
         if (uValid) {
@@ -239,6 +251,7 @@ class Tage(params: TageParams = TageParams()) extends BasePredictor {
 
     val instantUpdate = true
     // override val debug = true
+    
 
     implicit val p: TageParams = params
 
@@ -252,11 +265,11 @@ class Tage(params: TageParams = TageParams()) extends BasePredictor {
     val TageBanks    = params.TageBanks
     val UseSC        = params.useStatisticalCorrector
 
-    val scNumTables = 5
+    val scNumTables = 6
     // Use the same history length as TAGE tables
     val scHistLens = 0 :: TableInfo.take(scNumTables-1).map { case (_, h, _) => h}.toList
-    val scTableInfos = List.fill[Tuple2[Int, Int]](scNumTables)((256, 6)) zip scHistLens map { case ((nRows, cBits), h) => (nRows, cBits, h) }
-    var scThreshold = SCThreshold(10)
+    val scTableInfos = List.fill[Tuple2[Int, Int]](scNumTables)((128, 6)) zip scHistLens map { case ((nRows, cBits), h) => (nRows, cBits, h) }
+    var scThreshold = SCThreshold(32)
 
     var brCount = 0
 
@@ -269,18 +282,16 @@ class Tage(params: TageParams = TageParams()) extends BasePredictor {
 
     val tageIdxHists = TableInfo.map { case (nRows, h, tL) => new FoldedHist(h, if (SuperScalar) log2(nRows/TageBanks) else log2(nRows))}
     val tageTagHistsTemp = TableInfo.map { case (nRows, h, tL) => (new FoldedHist(h, tL), new FoldedHist(h, tL-1))}.unzip
-    // FHist[2][numTables]
+
     val tageTagHists = List(tageTagHistsTemp._1.toList, tageTagHistsTemp._2.toList)
-    // println(type(tageTagH))
-    // val tageTagHists = tageTagH.unzip
-    // println(f"length tageTagHists ${tageTagHists(0).length}%d")
+
     val phist = new PathHistory(30, 2)
     lazy val scHists = scTableInfos.map { case (nRows, _, h) => new FoldedHist(h, log2Up(nRows))}.toList
 
 
     case class TageMeta(val hist: TageHistories, val pvdr: Int, val pvdrValid: Boolean,
         val altDiff: Boolean, val pvdrU: Int, val pvdrCtr: Int, val alloc: Int,
-        val allocValid: Boolean) {
+        val allocValid: Boolean, tagePred: Boolean) {
         override def toString: String = {
             f"pvdr($pvdrValid%5b): $pvdr%d, altDiff: $altDiff%5b, pvdrU: $pvdrU%d, pvdrCtr: $pvdrCtr%d, alloc($allocValid%5b): $alloc%d"
         }
@@ -292,25 +303,6 @@ class Tage(params: TageParams = TageParams()) extends BasePredictor {
     case class TagePredictionMeta(val pc: Long, val histPtr: Int, val tageMeta: TageMeta, val scMeta: SCMeta,
         val pred: Boolean, val isBr: Boolean) extends PredictionMeta {}
 
-    @scala.annotation.tailrec
-    final def tageCalRes(tResp: List[TableResp], ti: Int, provided: Boolean, provider: Int,
-        altPred: Boolean, finalAltPred: Boolean, res: Boolean): (Boolean, Int, Boolean, Boolean, Boolean) = {
-        val hit = tResp(0).hit
-        val ctr = tResp(0).ctr
-        val u   = tResp(0).u
-        tResp match {
-            case Nil => {println("Should not reach here"); (false, 0, false, false, false)}
-            case resp :: Nil => {
-                if (resp.hit) (true, ti, ctr >= 4, altPred, if ((ctr == 3 || ctr == 4) && u == 0) altPred else ctr >= 4)
-                else (provided, provider, altPred, finalAltPred, res)
-            }
-            case resp :: tail => {
-                if (resp.hit) tageCalRes(tail, ti+1, true, ti, ctr >= 4, altPred, (if ((ctr == 3 || ctr == 4) && u == 0) altPred else (ctr >= 4)))
-                else tageCalRes(tail, ti+1, provided, provider, altPred, finalAltPred, res)
-            }
-        }
-    }
-
     val obq = new mutable.Queue[TagePredictionMeta]
 
     def predict(pc: Long) = true
@@ -318,7 +310,60 @@ class Tage(params: TageParams = TageParams()) extends BasePredictor {
     def predict(pc: Long, mask: Int): Boolean = true
 
     def predict(pc: Long, isBr: Boolean): Boolean = {
-        // printf("predicting pc: 0x%x\n", pc)
+        def tagePredict(tageResp: List[TableResp], bimResp: Boolean): (Boolean, Int, Boolean, Boolean, Boolean) = {
+            @scala.annotation.tailrec
+            def tageCalRes(tResp: List[TableResp], ti: Int, provided: Boolean, provider: Int,
+                altPred: Boolean, finalAltPred: Boolean, res: Boolean): (Boolean, Int, Boolean, Boolean, Boolean) = {
+                val hit = tResp(0).hit
+                val ctr = tResp(0).ctr
+                val u   = tResp(0).u
+                tResp match {
+                    case Nil => {println("Should not reach here"); (false, 0, false, false, false)}
+                    case resp :: Nil => {
+                        if (resp.hit) (true, ti, ctr >= 4, altPred, if ((ctr == 3 || ctr == 4) && u == 0) altPred else ctr >= 4)
+                        else (provided, provider, altPred, finalAltPred, res)
+                    }
+                    case resp :: tail => {
+                        if (resp.hit) tageCalRes(tail, ti+1, true, ti, ctr >= 4, altPred, (if ((ctr == 3 || ctr == 4) && u == 0) altPred else (ctr >= 4)))
+                        else tageCalRes(tail, ti+1, provided, provider, altPred, finalAltPred, res)
+                    }
+                }
+            }
+            tageCalRes(tageResp.toList, 0, false, 0, bimResp, bimResp, bimResp)
+
+        }
+
+        def scPredict(pc: Long, tageRes: Boolean, tageProvided: Boolean, tageProvider: Int, tageProviderCtr: Int): (Boolean, SCMeta) = {
+            if (UseSC) {
+                val scHist = (scHists map {(i: FoldedHist) => i match {case t=> t.apply()}}).toList
+                val scResps = (scTables zip scHist) map { case (t, h) => {println(f"looking up table with histlen ${t.histLen}"); t.lookup(pc, h) }}
+                val scs = scResps map { case List(rnt, rt) => if (tageRes) rt else rnt }
+                val scCentered = scs map (r => 2 * r + 1)
+                val scSum = scCentered reduce (_+_)
+                val tagePredCenteredVal = 2 * (tageProviderCtr - 4) + 1
+                val totalSum = scSum + 8 * abs(tagePredCenteredVal)
+                val sumBelowThreshold = abs(totalSum) < scThreshold()
+                val scReverted = totalSum < 0 && !sumBelowThreshold
+                val res = scReverted && tageProvided
+                Debug(UseSC, f"scCtred: $scCentered%-30s, tageCtred: $tagePredCenteredVal%3d, sum: $totalSum%4d, thres: ${scThreshold()}%3d, reverted: $scReverted%5s, res: $res%5s")
+                (res, SCMeta(scHist, tageRes, tageProvided, scReverted, sumBelowThreshold))
+            }
+            else {
+                (false, SCMeta(List(0), tageRes, false, false, false))
+            }
+        }
+
+        // returns (allocEntry, alloced)
+        def tageAlloc(tageResp: List[TableResp], provider: Int, provided: Boolean): (Int, Boolean) = {
+            val allocatableArray = tageResp.zipWithIndex.map{ case(r, i) => !r.hit && r.u == 0 && ((i > provider && provided) || !provided) }.toArray
+            val allocatable = boolArrayToInt(allocatableArray)
+            val allocMask   = scala.util.Random.nextInt((1 << TageNTables))
+            val maskedEntry = PriorityEncoder(allocatable & allocMask, TageNTables)
+            val firstEntry  = PriorityEncoder(allocatable, TageNTables)
+            val allocEntry  = if (allocatableArray(maskedEntry)) maskedEntry else firstEntry
+            (allocEntry, allocatable != 0)
+        }
+
         val nowPtr = ghist.getHistPtr
          
         if (isBr) {
@@ -331,53 +376,34 @@ class Tage(params: TageParams = TageParams()) extends BasePredictor {
             }
             val bimResp: Boolean = bim.lookUp(pc)
 
-            val (provided, provider, altPred, finalAltPred, tageRes) = tageCalRes(tageTableResps.toList, 0, false, 0, bimResp, bimResp, bimResp)
-
-            val scResps = (scTables zip scHists) map { case (t, h) => t.lookup(pc, h()) }
-            val scs = scResps map { case List(rnt, rt) => if (tageRes) rt else rnt }
-            val scCentered = scs map (r => 2 * r - 1)
-            val scSum = scCentered reduce (_+_)
-            val tagePredCenteredVal = 2 * (tageTableResps(provider).ctr - 4) - 1
-            val totalSum = scSum + 8 * tagePredCenteredVal
-            val sumBelowThreshold = abs(totalSum) < scThreshold()
-            val scReverted = totalSum < 0 && sumBelowThreshold
-            var res = tageRes
-            if (UseSC && provided) {
-                // only when SC disagrees and sum is above threshold should we revert the prediction
-                if (scReverted) res = !res
-            }
-                
-            if (!UseSC) assert(tageRes == res)
-
-            val allocatableArray = tageTableResps.zipWithIndex.map{ case(r, i) => !r.hit && r.u == 0 && ((i > provider && provided) || !provided) }.toArray
-            val allocatable = boolArrayToInt(allocatableArray)
-            val allocMask   = scala.util.Random.nextInt((1 << TageNTables))
-            val maskedEntry = PriorityEncoder(allocatable & allocMask, TageNTables)
-            val firstEntry  = PriorityEncoder(allocatable, TageNTables)
-            val allocEntry  = if (allocatableArray(maskedEntry)) maskedEntry else firstEntry
-                
-
-            val altDiffers = res != finalAltPred
-            Debug(f"pc:0x$pc%x predicted to be ${if (res) "taken" else "not taken"}%s")
+            val (provided, provider, altPred, finalAltPred, tageRes) = tagePredict(tageTableResps.toList, bimResp)
+            val providerU = tageTableResps(provider).u
+            val providerCtr = tageTableResps(provider).ctr
+            val altDiffers = tageRes != finalAltPred
+            val (allocEntry, allocated) = tageAlloc(tageTableResps.toList, provider, provided)
             val tageFolded = (tageIdxHists map (_()),
                               tageTagHists(0) map (_()),
                               tageTagHists(1) map (_())).zipped.toList.map{case (a, b, c) => List(a, b, c)}.toList
             val tageHist = TageHistories(tageFolded, phist())
-            val scHist = (scHists map {(i: FoldedHist) => i match {case t=> t.apply()}}).toList
-            val meta = new TagePredictionMeta(pc, nowPtr,
-                TageMeta(tageHist, provider, provided, altDiffers, 
-                tageTableResps(provider).u, tageTableResps(provider).ctr,
-                allocEntry, allocatable != 0),
-                SCMeta(scHist, tageRes, provided, scReverted, sumBelowThreshold), res, isBr)
+            val tageMeta = TageMeta(tageHist, provider, provided, altDiffers,
+                                providerU, providerCtr, allocEntry, allocated, tageRes)
+
+            val (scRes, scMeta) = scPredict(pc, tageRes, provided, provider, tageTableResps(provider).ctr)
+            val res = tageRes ^ scRes
+
+            val meta = new TagePredictionMeta(pc, nowPtr, tageMeta, scMeta, res, isBr)
             obq.enqueue(meta)
-            brCount += 1
-            if (brCount % UBitPeriod == 0) { tables.foreach(t => t.decayU()) }
+
+
+            if (!UseSC) assert(tageRes == res) // Ensure tage prediction is not altered when SC is off
+
+            Debug(f"pc:0x$pc%x predicted to be ${if (res) "taken" else "not taken"}%s")
             res
         }
         else {
             if (updateOnUncond) {
                 obq.enqueue(new TagePredictionMeta(pc, nowPtr,
-                      TageMeta(TageHistories(List(List(0)), 0), 0, false, false, 0, 0, 0, false),
+                      TageMeta(TageHistories(List(List(0)), 0), 0, false, false, 0, 0, 0, false, true),
                       SCMeta(List(0), true, false, false, false),
                       true, false))
             }
@@ -397,12 +423,11 @@ class Tage(params: TageParams = TageParams()) extends BasePredictor {
         Debug(f"updating with histptr $histPtr")
         val tageOldBitPos = tables.map(t => histPtr - t.histLen)
         val tageOldBits = tageOldBitPos.map(ghist(_))
-        updateWithOldBit((tageIdxHists, tageOldBits, tageOldBitPos).zipped.toList)
-        updateWithOldBit((tageTagHists(0), tageOldBits, tageOldBitPos).zipped.toList)
-        updateWithOldBit((tageTagHists(1), tageOldBits, tageOldBitPos).zipped.toList)
+        Seq(tageIdxHists, tageTagHists(0), tageTagHists(1)) foreach {h => updateWithOldBit((h, tageOldBits, tageOldBitPos).zipped.toList)}
         if (UseSC) {
-            val scOldBits = scHistLens.map(l => ghist(histPtr-l))
-            updateWithOldBit((scHists, scOldBits, tageOldBitPos).zipped.toList)
+            val scOldBitPos = scHistLens.map(histPtr-_)
+            val scOldBits   = scOldBitPos.map(ghist(_))
+            updateWithOldBit((scHists, scOldBits, scOldBitPos).zipped.toList)
         }
     }
 
@@ -417,17 +442,7 @@ class Tage(params: TageParams = TageParams()) extends BasePredictor {
     }
 
     def update(pc: Long, taken: Boolean) = {
-        // printf(f"updating pc:0x$pc%x, taken:$taken%b, pred:$pred%b\n")
-        val meta = obq.head
-        val pred = meta.pred
-        if (pc != meta.pc) {
-            println("update pc does not correspond with expected pc\n")
-        } else {
-            obq.dequeue()
-            val misPred = taken != pred
-
-            Debug("[update meta] " + meta.tageMeta + f" | ${if (taken) " T" else "NT"}%s pred to ${if (pred) " T" else "NT"}%s -> ${if(misPred) "miss" else "corr"}%s")
-            Debug(f"[update hist] ${ghist.getHistStr(ptr=meta.histPtr)}%s")
+        def tageUpdate(meta: TagePredictionMeta, misPred: Boolean) = {
             val tageMeta = meta.tageMeta
             val tageHists = tageMeta.hist
             if (tageMeta.pvdrValid) {
@@ -442,23 +457,42 @@ class Tage(params: TageParams = TageParams()) extends BasePredictor {
                 if (tageMeta.allocValid) tables(tageMeta.alloc).allocUpdate(pc, taken, tageHists.foldedHists(tageMeta.alloc), tageHists.pHist)
                 else (0 until TageNTables).foreach(i => if (i > tageMeta.pvdr) tables(i).decrementU(pc, idxHists(i), pHist))
             }
-            if (UseSC) {
-                val scMeta = meta.scMeta
-                val scHist = scMeta.hist
+        }
+
+        def scUpdate(scMeta: SCMeta, misPred: Boolean) = {
+            val scHist = scMeta.hist
+            val misReverted = scMeta.scReverted && misPred
+            Debug(UseSC, f"[scUpdate]: scReverted(${scMeta.scReverted && scMeta.scUsed}%5s), mispred($misPred%5s)")
+            if (misReverted || scMeta.sumBelowThreshold) {
                 if (scMeta.scUsed) {
-                    if (misPred || scMeta.sumBelowThreshold) {
-                        (scTables zip scHist) foreach { case (t, h) => t.update(pc, h, scMeta.tagePred, !misPred) }
-                        // update on mispred has a higher priority
-                        scThreshold = scThreshold.update(misPred)
-                    }
+                    (scTables zip scHist) foreach { case (t, h) => t.update(pc, h, scMeta.tagePred, !misReverted) }
+                    // update on mispred has a higher priority
+                    scThreshold = scThreshold.update(misReverted)
                 }
             }
+        }
+
+        val meta = obq.head
+        val pred = meta.pred
+        val misPred = taken != pred
+        val tageMisPred = taken != meta.tageMeta.tagePred
+
+        if (pc != meta.pc) {
+            println("update pc does not correspond with expected pc\n")
+        } else {
+            obq.dequeue()
+            tageUpdate(meta, tageMisPred)
+            if (UseSC) { scUpdate(meta.scMeta, misPred) }
             ghist.updateHist(taken)
             bim.update(pc, taken)
             updateFoldedHistories(taken, meta.histPtr)
             phist.update(pc)
+            brCount += 1
+            if (brCount % UBitPeriod == 0) { tables.foreach(t => t.decayU()) }
+            Debug("[update meta] " + meta.tageMeta + f" | ${if (taken) " T" else "NT"}%s pred to ${if (pred) " T" else "NT"}%s -> ${if(misPred) "miss" else "corr"}%s")
+            Debug(f"[update hist] ${ghist.getHistStr(ptr=meta.histPtr)}%s")
         }
-        pred
+        misPred
     }
 
     def flush() = {
@@ -501,7 +535,8 @@ object Tage {
                                                       ( 4096,   8),
                                                       ( 4096,   8),
                                                       ( 2048,   9),
-                                                      ( 2048,   9))
+                                                      ( 2048,   9)/* ,
+                                                      ( 1024,  10) */)
                 wrapParams(ops - 'useXS, p.copy(useGem5=false, t=xst, SuperScalar=true, minHist=2, maxHist=64))
             }
             case o if (o.contains('useStatisticalCorrector)) => {

@@ -116,9 +116,9 @@ class BranchPredictorRunner() extends RunnerUtils with ArgParser with FileIOUtil
                     // we only care about branches
                     bp.predict(pc, isBr)
                     if (isBr) {
-                        val pred = bp.update(pc, taken)
+                        val mispred = bp.update(pc, taken)
                         val l = 
-                            if (taken != pred) {
+                            if (mispred) {
                                 if (stats.contains(pc)) List(stats(pc)(0) + 1, stats(pc)(1))
                                 else List(1, 0)
                             }
