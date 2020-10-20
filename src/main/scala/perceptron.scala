@@ -63,11 +63,11 @@ class PerceptronBP()(implicit val p: PerceptronParams) extends BasePredictor {
     def update(pc: Long, taken: Boolean): Boolean = {
         val meta = obq.head
         val pred = meta.pred
+        val misPred = taken != pred
         if (pc != meta.pc) {
             println("update pc does not correspond with expected pc\n")
         } else {
             obq.dequeue()
-            val misPred = taken != pred
             val r = getRow(pc)
             if (misPred || abs(meta.predSum) <= threshold) {
                 bias(r) = bias(r).update(taken)
@@ -76,7 +76,7 @@ class PerceptronBP()(implicit val p: PerceptronParams) extends BasePredictor {
             }
             ghist.updateHist(taken)
         }
-        pred
+        misPred
     }
 
     def updateUncond(pc: Long): Unit = {
