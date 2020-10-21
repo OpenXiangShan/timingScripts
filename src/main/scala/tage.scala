@@ -60,7 +60,7 @@ class SCTable(val numRows: Int, val ctrBits: Int, val histLen: Int) extends Pred
     def lookup(pc: Long, hist: Int): List[Int] = {
         val idx = getIdx(pc, hist)
         val res = scTable(idx).map(_()).toList
-        println(f"idx $idx, res $res")
+        // println(f"idx $idx, res $res")
         debugIdx = idx
         res
     }
@@ -78,16 +78,18 @@ class SCTable(val numRows: Int, val ctrBits: Int, val histLen: Int) extends Pred
 case class SCThreshold(val threshold: Int, val tc: SatCounter = SatCounter(5, 0, signed=true)) {
     def initialThres: Int = 32 // to be validated
     def apply() = this.threshold
+    def maxThres: Int = 31
+    def minThres: Int = 5
     def update(cause: Boolean): SCThreshold = {
         println(f"Updating TC because of ${if (cause) "mis_reverted" else "below threshold"}")
         val newTC = tc.update(cause)
-        if (newTC.isSaturatedPos) {
+        if (newTC.isSaturatedPos && threshold < maxThres) {
             println(f"threshold incremented")
-            this.copy(tc=this.tc.copy(ctr=0), threshold=this.threshold+1)
+            this.copy(tc=this.tc.copy(ctr=0), threshold=this.threshold+2)
         }
-        else if (newTC.isSaturatedNeg) {
+        else if (newTC.isSaturatedNeg && threshold > minThres) {
             println(f"threshold decremented")
-            this.copy(tc=this.tc.copy(ctr=0), threshold=this.threshold-1)
+            this.copy(tc=this.tc.copy(ctr=0), threshold=this.threshold-2)
         } 
         else this.copy(tc=newTC)
     }
@@ -269,7 +271,7 @@ class Tage(params: TageParams = TageParams()) extends BasePredictor {
     // Use the same history length as TAGE tables
     val scHistLens = 0 :: TableInfo.take(scNumTables-1).map { case (_, h, _) => h}.toList
     val scTableInfos = List.fill[Tuple2[Int, Int]](scNumTables)((128, 6)) zip scHistLens map { case ((nRows, cBits), h) => (nRows, cBits, h) }
-    var scThreshold = SCThreshold(32)
+    var scThreshold = SCThreshold(5)
 
     var brCount = 0
 
@@ -298,7 +300,7 @@ class Tage(params: TageParams = TageParams()) extends BasePredictor {
     }
     
     case class SCMeta(val hist: List[Int], val tagePred: Boolean, val scUsed: Boolean,
-        val scReverted: Boolean, val sumBelowThreshold: Boolean) {}
+        val scPred: Boolean, val sum: Int) {}
 
     case class TagePredictionMeta(val pc: Long, val histPtr: Int, val tageMeta: TageMeta, val scMeta: SCMeta,
         val pred: Boolean, val isBr: Boolean) extends PredictionMeta {}
@@ -314,9 +316,7 @@ class Tage(params: TageParams = TageParams()) extends BasePredictor {
             @scala.annotation.tailrec
             def tageCalRes(tResp: List[TableResp], ti: Int, provided: Boolean, provider: Int,
                 altPred: Boolean, finalAltPred: Boolean, res: Boolean): (Boolean, Int, Boolean, Boolean, Boolean) = {
-                val hit = tResp(0).hit
-                val ctr = tResp(0).ctr
-                val u   = tResp(0).u
+                val TableResp(ctr, u, hit) = tResp(0)
                 tResp match {
                     case Nil => {println("Should not reach here"); (false, 0, false, false, false)}
                     case resp :: Nil => {
@@ -334,22 +334,22 @@ class Tage(params: TageParams = TageParams()) extends BasePredictor {
         }
 
         def scPredict(pc: Long, tageRes: Boolean, tageProvided: Boolean, tageProvider: Int, tageProviderCtr: Int): (Boolean, SCMeta) = {
-            if (UseSC) {
+            if (UseSC && tageProvided) {
                 val scHist = (scHists map {(i: FoldedHist) => i match {case t=> t.apply()}}).toList
-                val scResps = (scTables zip scHist) map { case (t, h) => {println(f"looking up table with histlen ${t.histLen}"); t.lookup(pc, h) }}
+                val scResps = (scTables zip scHist) map { case (t, h) => t.lookup(pc, h) }
                 val scs = scResps map { case List(rnt, rt) => if (tageRes) rt else rnt }
                 val scCentered = scs map (r => 2 * r + 1)
                 val scSum = scCentered reduce (_+_)
                 val tagePredCenteredVal = 2 * (tageProviderCtr - 4) + 1
                 val totalSum = scSum + 8 * abs(tagePredCenteredVal)
                 val sumBelowThreshold = abs(totalSum) < scThreshold()
-                val scReverted = totalSum < 0 && !sumBelowThreshold
-                val res = scReverted && tageProvided
-                Debug(UseSC, f"scCtred: $scCentered%-30s, tageCtred: $tagePredCenteredVal%3d, sum: $totalSum%4d, thres: ${scThreshold()}%3d, reverted: $scReverted%5s, res: $res%5s")
-                (res, SCMeta(scHist, tageRes, tageProvided, scReverted, sumBelowThreshold))
+                // val sumBelowUpdateThreshold = abs(totalSum) < (21 + 8 * scThreshold())
+                val scPred = if (!sumBelowThreshold) totalSum >= 0 else tageRes
+                Debug(UseSC, f"scCtred: $scCentered%-30s, tageCtred: $tagePredCenteredVal%3d, sum: $totalSum%4d, thres: ${scThreshold()}%3d, reverted: ${scPred != tageRes}%5s, res: $scPred%5s")
+                (scPred, SCMeta(scHist, tageRes, tageProvided, scPred, totalSum))
             }
             else {
-                (false, SCMeta(List(0), tageRes, false, false, false))
+                (tageRes, SCMeta(List(0), tageRes, tageProvided, tageRes, 0))
             }
         }
 
@@ -389,7 +389,7 @@ class Tage(params: TageParams = TageParams()) extends BasePredictor {
                                 providerU, providerCtr, allocEntry, allocated, tageRes)
 
             val (scRes, scMeta) = scPredict(pc, tageRes, provided, provider, tageTableResps(provider).ctr)
-            val res = tageRes ^ scRes
+            val res = scRes
 
             val meta = new TagePredictionMeta(pc, nowPtr, tageMeta, scMeta, res, isBr)
             obq.enqueue(meta)
@@ -404,7 +404,7 @@ class Tage(params: TageParams = TageParams()) extends BasePredictor {
             if (updateOnUncond) {
                 obq.enqueue(new TagePredictionMeta(pc, nowPtr,
                       TageMeta(TageHistories(List(List(0)), 0), 0, false, false, 0, 0, 0, false, true),
-                      SCMeta(List(0), true, false, false, false),
+                      SCMeta(List(0), true, false, false, 0),
                       true, false))
             }
             true
@@ -459,15 +459,24 @@ class Tage(params: TageParams = TageParams()) extends BasePredictor {
             }
         }
 
-        def scUpdate(scMeta: SCMeta, misPred: Boolean) = {
+        def scUpdate(scMeta: SCMeta, taken: Boolean) = {
             val scHist = scMeta.hist
-            val misReverted = scMeta.scReverted && misPred
-            Debug(UseSC, f"[scUpdate]: scReverted(${scMeta.scReverted && scMeta.scUsed}%5s), mispred($misPred%5s)")
-            if (misReverted || scMeta.sumBelowThreshold) {
-                if (scMeta.scUsed) {
-                    (scTables zip scHist) foreach { case (t, h) => t.update(pc, h, scMeta.tagePred, !misReverted) }
-                    // update on mispred has a higher priority
-                    scThreshold = scThreshold.update(misReverted)
+            val scReverted = (scMeta.tagePred != scMeta.scPred) && scMeta.scUsed
+            val mispred = scMeta.scPred != taken
+            Debug(UseSC, f"[scUpdate]: scReverted($scReverted%5s), mispred($mispred%5s)")
+            if (scMeta.scUsed) {
+                val sumAbs = abs(scMeta.sum)
+                val useThres = scThreshold()
+                val udpateThres = 21 + 8 * scThreshold()
+                val scPred = scMeta.scPred
+                val tagePred = scMeta.tagePred
+                if (scPred != tagePred) {
+                    if (sumAbs >= useThres - 4 && sumAbs <= useThres - 2) {
+                        scThreshold = scThreshold.update(scPred != taken)
+                    }
+                }
+                if (scPred != taken || sumAbs < udpateThres) {
+                    (scTables zip scHist) foreach { case (t, h) => t.update(pc, h, tagePred, taken) }
                 }
             }
         }
@@ -482,7 +491,7 @@ class Tage(params: TageParams = TageParams()) extends BasePredictor {
         } else {
             obq.dequeue()
             tageUpdate(meta, tageMisPred)
-            if (UseSC) { scUpdate(meta.scMeta, misPred) }
+            if (UseSC) { scUpdate(meta.scMeta, taken) }
             ghist.updateHist(taken)
             bim.update(pc, taken)
             updateFoldedHistories(taken, meta.histPtr)
