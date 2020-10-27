@@ -209,10 +209,10 @@ class BranchPredictorRunner() extends RunnerUtils with ArgParser with FileIOUtil
     }
 }
 
-object BranchPredictorRunnerTest extends RunnerUtils with ArgParser {
-    def main(args: Array[String]): Unit = {
-        val options = parse(args)
-        val bpr = new BranchPredictorRunner()
-        bpr.run(options)
-    }
-}
+// object BranchPredictorRunnerTest extends RunnerUtils with ArgParser {
+//     def main(args: Array[String]): Unit = {
+//         val options = parse(args)
+//         val bpr = new BranchPredictorRunner()
+//         bpr.run(options)
+//     }
+// }

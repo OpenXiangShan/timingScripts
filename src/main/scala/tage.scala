@@ -28,7 +28,9 @@ case class TageParams (
     val UBitPeriod: Int = 4096,
     val SuperScalar: Boolean = false,
     val useGem5: Boolean = false,
-    val useStatisticalCorrector: Boolean = false)
+    val useStatisticalCorrector: Boolean = false,
+    val sct: Seq[Tuple2[Int, Int]] = Seq.fill(6)((1024,6)),
+    val scThresInit: Int = 5)
 {
     val TableInfo = t.zipWithIndex.map { case((s, ta), i) => {
         val hist = (minHist * pow(maxHist/minHist, i.toDouble / (t.size - 1)) + 0.5).toInt
@@ -51,27 +53,45 @@ case class TageParams (
 
 abstract class TageComponents()(implicit params: TageParams) extends PredictorComponents {}
 
-class SCTable(val numRows: Int, val ctrBits: Int, val histLen: Int) extends PredictorComponents {
-    lazy val scTable = Array.fill[Array[SatCounter]](numRows)(Array.fill[SatCounter](2)(SatCounter(ctrBits, 0, signed=true)))
-    val rowMask = getMask(log2Up(numRows))
+class SCTable(val numRows: Int, val ctrBits: Int, val histLen: Int)(implicit val p: TageParams) extends TageComponents()(p) {
+    val superscalar = false
+    val nRows = if (superscalar) { numRows / p.TageBanks } else numRows
+    val nBanks = p.TageBanks
+    println(s"numRows: $nRows")
+    lazy val scTable = Array.fill[Array[SatCounter]](nRows)(Array.fill[SatCounter](2)(SatCounter(ctrBits, 0, signed=true)))
+    lazy val scTables = Array.fill[Array[Array[SatCounter]]](p.TageBanks)(Array.fill[Array[SatCounter]](nRows)(Array.fill[SatCounter](2)(SatCounter(ctrBits, 0, signed=true))))
+    val rowMask = getMask(log2Up(nRows))
+    val bankMask = getMask(log2Up(nBanks))
 
     var debugIdx: Int = 0
-    def getIdx(pc: Long, hist: Int): Int = ((pc >>> 2) & rowMask).toInt ^ hist
+    def getBank(pc: Long): Int = ((pc >>> 2) & bankMask).toInt
+    def getIdx(pc: Long, hist: Int): Int = {
+        val unhashed = 
+            if (superscalar)
+                (pc >>> (1 + log2Up(nBanks))).toInt
+            else
+                (pc >>> 2).toInt
+        (unhashed ^ hist) & rowMask
+    }
     def lookup(pc: Long, hist: Int): List[Int] = {
+        val bank = getBank(pc)
         val idx = getIdx(pc, hist)
-        val res = scTable(idx).map(_()).toList
+        val e = if (superscalar) scTables(bank)(idx) else scTable(idx)
+        val res = e.map(_()).toList
         // println(f"idx $idx, res $res")
         debugIdx = idx
         res
     }
-    def update(idx: Int, tageTaken: Boolean, predCorr: Boolean): Unit = {
-        val subIdx = if (tageTaken) 1 else 0
-        scTable(idx)(subIdx) = scTable(idx)(subIdx).update(predCorr)
-    }
     def update(pc: Long, hist: Int, tageTaken: Boolean, predCorr: Boolean): Unit = {
+        val bank = getBank(pc)
         val idx = getIdx(pc, hist)
+        val subIdx = if (tageTaken) 1 else 0
         assert(debugIdx == idx)
-        update(idx, tageTaken, predCorr)
+        if (superscalar) {
+            scTables(bank)(idx)(subIdx) = scTables(bank)(idx)(subIdx).update(predCorr)
+        } else {
+            scTable(idx)(subIdx) = scTable(idx)(subIdx).update(predCorr)
+        }
     }
 }
 
@@ -266,12 +286,14 @@ class Tage(params: TageParams = TageParams()) extends BasePredictor {
     val SuperScalar  = params.SuperScalar
     val TageBanks    = params.TageBanks
     val UseSC        = params.useStatisticalCorrector
+    val SCConfigs    = params.sct
+    val SCThresInit  = params.scThresInit
 
-    val scNumTables = 6
+    val scNumTables = SCConfigs.length
     // Use the same history length as TAGE tables
     val scHistLens = 0 :: TableInfo.take(scNumTables-1).map { case (_, h, _) => h}.toList
-    val scTableInfos = List.fill[Tuple2[Int, Int]](scNumTables)((128, 6)) zip scHistLens map { case ((nRows, cBits), h) => (nRows, cBits, h) }
-    var scThreshold = SCThreshold(5)
+    val scTableInfos = SCConfigs zip scHistLens map { case ((nRows, cBits), h) => (nRows, cBits, h) }
+    var scThreshold = SCThreshold(SCThresInit)
 
     var brCount = 0
 
@@ -467,15 +489,15 @@ class Tage(params: TageParams = TageParams()) extends BasePredictor {
             if (scMeta.scUsed) {
                 val sumAbs = abs(scMeta.sum)
                 val useThres = scThreshold()
-                val udpateThres = 21 + 8 * scThreshold()
+                val updateThres = 21 + 8 * scThreshold()
                 val scPred = scMeta.scPred
                 val tagePred = scMeta.tagePred
                 if (scPred != tagePred) {
-                    if (sumAbs >= useThres - 4 && sumAbs <= useThres - 2) {
+                    if (sumAbs <= useThres - 2) {
                         scThreshold = scThreshold.update(scPred != taken)
                     }
                 }
-                if (scPred != taken || sumAbs < udpateThres) {
+                if (scPred != taken || sumAbs < updateThres) {
                     (scTables zip scHist) foreach { case (t, h) => t.update(pc, h, tagePred, taken) }
                 }
             }
