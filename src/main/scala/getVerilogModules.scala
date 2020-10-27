@@ -9,6 +9,7 @@ import scala.util.Try
 import scala._
 import scala.collection.mutable
 import java.io._
+import scala.language.postfixOps
 
 class VerilogModuleExtractor() extends FileIOUtils {
     //                              module name
@@ -97,12 +98,15 @@ class VerilogModuleExtractor() extends FileIOUtils {
     
     // We first get records of all the modules and its submodule record
     // Then we choose a module as the root node to traverse its submodule
-    def processFromModule(name: String, map: ModuleMap): Unit = {
+    def processFromModule(name: String, map: ModuleMap, doneSet: Set[String] = Set()): Unit = {
         val r = map(name)
         writeModuleToFile(name, r)
         val submodules = r._2
         // DFS
-        submodules.foreach { s => processFromModule(s._1, map - "name") }
+        val subTypesSet = submodules map (m => m._1) toSet
+        val nowMap = map - "name"
+        val nowSet = doneSet ++ subTypesSet
+        subTypesSet.foreach { s  => if (!doneSet.contains(s)) processFromModule(s, nowMap, nowSet) }
     }
 }
 
