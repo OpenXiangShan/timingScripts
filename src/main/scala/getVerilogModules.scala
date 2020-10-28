@@ -38,13 +38,14 @@ class VerilogModuleExtractor() extends FileIOUtils {
             def iter(cont: List[String], subm: List[SubMoudleRecord]): ModuleRecord = 
                 it.next() match {
                     case l: String => l match {
-                        case endMoudlePattern() => (cont ::: List(l), subm)
-                        case subMoudlePattern(ty, name) => iter(cont ::: List(l), subm ::: List((ty, name)))
-                        case _ => iter(cont ::: List(l), subm)
+                        case endMoudlePattern() => (l :: cont, subm)
+                        case subMoudlePattern(ty, name) => iter(l :: cont, (ty, name) :: subm)
+                        case _ => iter(l :: cont, subm)
                     }
                     case _ => {println("Should not reach here"); (cont, subm) }
                 }
-            iter(content, submodules)
+            val temp = iter(content, submodules)
+            (temp._1.reverse, temp._2)
         }
         def traverse(m: ModuleMap, it: Iterator[String]): ModuleMap = 
             if (it.hasNext) {
