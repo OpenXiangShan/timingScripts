@@ -15,7 +15,7 @@ class VerilogModuleExtractor() extends FileIOUtils {
     //                              module name
     val modulePattern = "module ([\\w]+)\\(".r.unanchored
     //                          type          name
-    val subMoudlePattern = "([\\w]+) ([\\w]+) \\( ".r.unanchored
+    val subMoudlePattern = "([\\w]+) ([\\w]+) \\((?: //.*)*\\Z".r.unanchored
     val endMoudleIOPattern = "\\);".r.unanchored
     val endMoudlePattern = "endmodule".r.unanchored
 
@@ -39,7 +39,10 @@ class VerilogModuleExtractor() extends FileIOUtils {
                 it.next() match {
                     case l: String => l match {
                         case endMoudlePattern() => (l :: cont, subm)
-                        case subMoudlePattern(ty, name) => iter(l :: cont, (ty, name) :: subm)
+                        case subMoudlePattern(ty, name) => {
+                            println(s"submoudle $ty $name")
+                            iter(l :: cont, (ty, name) :: subm)
+                        }
                         case _ => iter(l :: cont, subm)
                     }
                     case _ => {println("Should not reach here"); (cont, subm) }
@@ -99,9 +102,9 @@ class VerilogModuleExtractor() extends FileIOUtils {
     
     // We first get records of all the modules and its submodule record
     // Then we choose a module as the root node to traverse its submodule
-    def processFromModule(name: String, map: ModuleMap, doneSet: Set[String] = Set()): Unit = {
+    def processFromModule(name: String, map: ModuleMap, doneSet: Set[String] = Set(), outPath: String = "/home/glr/boom_verilog/Frontend/"): Unit = {
         val r = map(name)
-        writeModuleToFile(name, r)
+        writeModuleToFile(name, r, outPath)
         val submodules = r._2
         // DFS
         val subTypesSet = submodules map (m => m._1) toSet
@@ -113,10 +116,11 @@ class VerilogModuleExtractor() extends FileIOUtils {
 
 object VMETest {
     def main(args: Array[String]): Unit = {
+        val sourceFile = "/home/glr/BOOM_verilog/chipyard.TestHarness.MegaBoomConfig.top.v"
+        val topModule = "BoomFrontend"
+        val outPath = "/home/glr/boom_verilog/Frontend/"
         val vme = new VerilogModuleExtractor()
-        val map = vme.makeRecordFromFile("/home/glr/XiangShan/build/XSSimTop.v")
-        // vme.showModuleRecord(map("IFU"))
-        vme.processFromModule("IFU", map)
-        // println(vme.makeRecordFromFile("/home/glr/XiangShan/build/XSSimTop.v"))
+        val map = vme.makeRecordFromFile(sourceFile)
+        vme.processFromModule(topModule, map, outPath)
     }
 }
