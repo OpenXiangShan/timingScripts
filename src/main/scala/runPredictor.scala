@@ -48,8 +48,8 @@ trait ArgParser {
                     nextOption(map ++ Map('useGem5 -> true), tail)
                 case "--useXS" :: tail =>
                     nextOption(map ++ Map('useXS -> true), tail)
-                case "--realOrder" :: tail =>
-                    nextOption(map ++ Map('useRealOrder -> true), tail)
+                case "--useSC" :: tail =>
+                    nextOption(map ++ Map('useStatisticalCorrector -> true), tail)
                 // case string :: opt2 :: tail if isSwitch(opt2) => 
                 //                     nextOption(map ++ Map('infile -> string), list.tail)
                 // case string :: Nil =>  nextOption(map ++ Map('infile -> string), list.tail)
@@ -70,8 +70,8 @@ trait RunnerUtils {
 }
 
 
-class BranchPredictorRunner(realOrder: Boolean = false) extends RunnerUtils with ArgParser with FileIOUtils {
-    val tw = new TraceWrapper
+class BranchPredictorRunner() extends RunnerUtils with ArgParser with FileIOUtils {
+    val tw = new TraceWrapper()
 
     val maxBrPrint = 10
 
@@ -116,9 +116,9 @@ class BranchPredictorRunner(realOrder: Boolean = false) extends RunnerUtils with
                     // we only care about branches
                     bp.predict(pc, isBr)
                     if (isBr) {
-                        val pred = bp.update(pc, taken)
+                        val mispred = bp.update(pc, taken)
                         val l = 
-                            if (taken != pred) {
+                            if (mispred) {
                                 if (stats.contains(pc)) List(stats(pc)(0) + 1, stats(pc)(1))
                                 else List(1, 0)
                             }
@@ -139,80 +139,12 @@ class BranchPredictorRunner(realOrder: Boolean = false) extends RunnerUtils with
         else stats
     }
 
-    @scala.annotation.tailrec
-    private def consumeCFI(updateQ: UpdateQ, pcycleQ: PcycleQ, predCycle: Long, stats: Stats, it: Iterator[Any])(implicit bp: BasePredictor): Stats = {
-        def updateEnd = !it.hasNext
-        @scala.annotation.tailrec
-        def updateEnq(uQ: UpdateQ, pQ: PcycleQ, n: Int): (UpdateQ, PcycleQ) = {
-            if (it.hasNext && n > 0) {
-                it.next() match {
-                    case CFIUpdateInfo(cycle, isBr, pc, taken, misPred, pcycle, _) => {
-                        // println(f"update enqueue: cycle($cycle%d) pcycle($pcycle%d)")
-                        updateEnq(uQ.enqueue(UpdateQueueElem(cycle, isBr, pc, taken, misPred)),
-                            pQ.enqueue(PcycleQueueElem(pcycle, pc, isBr)), n-1)
-                    }
-                    case _ => {
-                        // println("unexpected cfi_update!!\n")
-                        updateEnq(uQ, pQ, n)
-                    }
-                }
-            }
-            else (uQ, pQ)
-        }
-
-        def qmaxlen = 50
-        val (uQ, pQ) = if (pcycleQ.isEmpty) updateEnq(updateQ, pcycleQ, qmaxlen) else (updateQ, pcycleQ)
-
-        def pHeadCycle = pQ.head.pcycle
-        def uHeadCycle = uQ.head.cycle
-
-        // println(f"pred cycle:${predCycle}%d, update cycle:${uHeadCycle}%d, pcy cycle:${pcyHeadCycle}%d")
-        if (pQ.isEmpty) {
-            stats
-        }
-        else if (pHeadCycle > uHeadCycle) {
-            // Update the predictor
-            val (uInfo, newuQ) = uQ.dequeue
-            val taken = uInfo.taken
-            val pc = uInfo.pc
-            // println(f"phead($pHeadCycle%d) > uhead($uHeadCycle%d), updating predictor pc($pc%x)")
-            if (uInfo.isBr) {
-                val pred = bp.update(pc, taken)
-                val l = 
-                    if (taken != pred) {
-                        if (stats.contains(pc)) List(stats(pc)(0) + 1, stats(pc)(1))
-                        else List(1, 0)
-                    }
-                    else {
-                        if (stats.contains(pc)) List(stats(pc)(0), stats(pc)(1) + 1)
-                        else List(0, 1)
-                    }
-                consumeCFI(newuQ, pQ, predCycle, stats + ((pc, l)), it)
-            }
-            else {
-                bp.updateUncond(pc)
-                consumeCFI(newuQ, pQ, predCycle, stats, it)
-            }
-        }
-        else {
-            if (predCycle <= pHeadCycle) {
-                val (p, newPcycleQ) = pQ.dequeue
-                // println(f"pcycle(${pHeadCycle}%d), predict pc(${p.pc}%x) and drop")
-                bp.predict(p.pc, p.isBr)
-                consumeCFI(uQ, newPcycleQ, pHeadCycle, stats, it)
-            } else {
-                // println(f"Predcycle(${predCycle}) > PcycleQ head cycle(${pHeadCycle}), dropping the PcycleQ head")
-                consumeCFI(uQ, pQ.dequeue._2, predCycle, stats, it)
-            }
-        }
-    }
-
     def runWithCFIInfo(cfis: Iterator[Any])(implicit bp: BasePredictor) = {
         val emptyStats = HashMap[Long, List[Int]]()
         val uQ  = Queue[UpdateQueueElem]()
         val pQ  = Queue[PcycleQueueElem]()
 
-        val stats = if (realOrder) consumeCFI(uQ, pQ, 0, emptyStats, cfis) else consumeCFI(emptyStats, cfis)
+        val stats = consumeCFI(emptyStats, cfis)
 
         println(f"Printing top $maxBrPrint%d mispredicted branches:")
 
@@ -230,7 +162,7 @@ class BranchPredictorRunner(realOrder: Boolean = false) extends RunnerUtils with
         val l = new File(log)
         if (l.exists()) {
             println(s"processing log $l")
-            val res = readFile[(Int, Int)](log, s => runWithCFIInfo(getCfiUpdates(s))).getOrElse((1,1))
+            val res = readFile[(Int, Int)](log, s => runWithCFIInfo(getCfiUpdates(s))).get//OrElse((1,1))
             (log, res)
         }
         else {
@@ -277,15 +209,10 @@ class BranchPredictorRunner(realOrder: Boolean = false) extends RunnerUtils with
     }
 }
 
-
-
-
-
-object BranchPredictorRunnerTest extends RunnerUtils with ArgParser {
-    def main(args: Array[String]): Unit = {
-        val options = parse(args)
-        val bpr = if (options.contains('useRealOrder)) new BranchPredictorRunner(true)
-                  else new BranchPredictorRunner()
-        bpr.run(options)
-    }
-}
+// object BranchPredictorRunnerTest extends RunnerUtils with ArgParser {
+//     def main(args: Array[String]): Unit = {
+//         val options = parse(args)
+//         val bpr = new BranchPredictorRunner()
+//         bpr.run(options)
+//     }
+// }

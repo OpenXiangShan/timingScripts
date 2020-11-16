@@ -4,6 +4,8 @@ target/*
 project/target/*
 target/.history
 branch_record/*
+verilog/*
+log*
 ### XilinxISE template
 # intermediate build files
 *.bgn

@@ -6,7 +6,7 @@ import scala.math._
 import scala.util._
 
 case class PerceptronParams (
-    val row: Int = 1024,
+    val row: Int = 256,
     val hislen: Int = 50,
     val ctrbits: Int = 8
 ) {
@@ -38,7 +38,7 @@ class PerceptronBP()(implicit val p: PerceptronParams) extends BasePredictor {
         val hist: List[Boolean],
         val pred: Boolean,
         val predSum: Int
-    )
+    ) extends PredictionMeta {}
 
     val obq = new mutable.Queue[PerceptronMeta]
 
@@ -63,11 +63,11 @@ class PerceptronBP()(implicit val p: PerceptronParams) extends BasePredictor {
     def update(pc: Long, taken: Boolean): Boolean = {
         val meta = obq.head
         val pred = meta.pred
+        val misPred = taken != pred
         if (pc != meta.pc) {
             println("update pc does not correspond with expected pc\n")
         } else {
             obq.dequeue()
-            val misPred = taken != pred
             val r = getRow(pc)
             if (misPred || abs(meta.predSum) <= threshold) {
                 bias(r) = bias(r).update(taken)
@@ -76,7 +76,7 @@ class PerceptronBP()(implicit val p: PerceptronParams) extends BasePredictor {
             }
             ghist.updateHist(taken)
         }
-        pred
+        misPred
     }
 
     def updateUncond(pc: Long): Unit = {

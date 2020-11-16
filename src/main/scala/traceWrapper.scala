@@ -244,17 +244,29 @@ class TraceWrapper() extends PredictorUtils with FileIOUtils {
     def transformLogToCsv(file: String) = {
         readFile[Unit](file, s => {
             val cfi_update = getCFIUpdateInfosFromSource(s)
-            writeToFile("/home/glr/scalaTage/branch_record/test.csv", w => {
+            val name = file.split("/|\\.").init.last
+            writeToFile("/home/glr/scalaTage/branch_record/"+name+".csv", w => {
                 cfi_update.foreach {
                     // _ => w.write("yes")
-                    case CFIUpdateInfo(_, isBr, pc, taken, _, _, _) => {
+                    case CFIUpdateInfo(_, isBr, pc, taken, _, pcycle, _) => {
                         // print("%x,%d,%d\n".format(pc, taken, isBr) )
-                        w.write(f"$pc%x,${if(taken) 1 else 0}%d,${if(isBr) 1 else 0}%d\n")
+                        if (isBr) w.write(f"$pc%x,${if(taken) 1 else 0}%d,${if(isBr) 1 else 0}%d\n")
                     }
                     case _ =>
                 }
             })
         })
+    }
+
+    def getLogs(path: String): Array[String] = {
+        import sys.process._
+        val files = s"ls $path".!!.split('\n')
+        val logPattern = raw"log".r.unanchored
+        files.map(f => if ((logPattern findAllIn f).length != 0) path+f else "").filter(_ != "").toArray
+    }
+
+    def transformAllLogsToCsv(path: String) = {
+        getLogs(path).foreach(transformLogToCsv(_))
     }
 
 }
