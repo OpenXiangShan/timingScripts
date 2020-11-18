@@ -104,23 +104,24 @@ class VerilogModuleExtractor() extends FileIOUtils {
     // Then we choose a module as the root node to traverse its submodule
     def processFromModule(name: String, map: ModuleMap, doneSet: Set[String] = Set(), outPath: String = "/home/glr/boom_verilog/Frontend/"): Unit = {
         val r = map(name)
+        new File(outPath).mkdirs() // ensure the path exists
         writeModuleToFile(name, r, outPath)
         val submodules = r._2
         // DFS
         val subTypesSet = submodules map (m => m._1) toSet
         val nowMap = map - "name"
         val nowSet = doneSet ++ subTypesSet
-        subTypesSet.foreach { s  => if (!doneSet.contains(s)) processFromModule(s, nowMap, nowSet) }
+        subTypesSet.foreach { s  => if (!doneSet.contains(s)) processFromModule(s, nowMap, nowSet, outPath) }
     }
 }
 
 object VMETest {
     def main(args: Array[String]): Unit = {
-        val sourceFile = "/home/glr/BOOM_verilog/chipyard.TestHarness.MegaBoomConfig.top.v"
+        val sourceFile = "/home/glr/BOOM/Giga/chipyard.TestHarness.GigaBoomConfig.top.v"
         val topModule = "BoomFrontend"
-        val outPath = "/home/glr/boom_verilog/Frontend/"
+        val outPath = "/home/glr/BOOM/Giga/Frontend/"
         val vme = new VerilogModuleExtractor()
         val map = vme.makeRecordFromFile(sourceFile)
-        vme.processFromModule(topModule, map, outPath)
+        vme.processFromModule(topModule, map, outPath=outPath)
     }
 }
