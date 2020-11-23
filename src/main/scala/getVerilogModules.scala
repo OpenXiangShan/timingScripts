@@ -1,4 +1,4 @@
-package scalaTage
+package vme
 
 import scala.math._
 import scala.util._
@@ -10,6 +10,19 @@ import scala._
 import scala.collection.mutable
 import java.io._
 import scala.language.postfixOps
+
+trait FileIOUtils {
+    // provides an interface to handle open and close when writing files
+    def writeToFile(f: String, action: (java.io.PrintWriter) => Unit) = {
+        val writer = new PrintWriter(new File(f))
+        action(writer)
+        writer.close()
+    }
+
+    def readFile[T](f: String, action: (scala.io.BufferedSource) => T): Try[T] = {
+        Using(Source.fromFile(f)) { s => action(s) }
+    }
+}
 
 class VerilogModuleExtractor() extends FileIOUtils {
     //                            name
