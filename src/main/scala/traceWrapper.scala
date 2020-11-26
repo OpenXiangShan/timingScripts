@@ -7,6 +7,7 @@ import scala.util.Try
 import scala._
 import scala.collection.mutable
 import java.io._
+import scala.collection.immutable.HashMap
 
 trait FileIOUtils {
     // provides an interface to handle open and close when writing files
@@ -47,6 +48,9 @@ case class CFIPredInfo(
 // This is a wrapper of trace produced by XiangShan BPU update,
 // which wraps cfi_updates into class CFIUpdateInfo
 class TraceWrapper() extends PredictorUtils with FileIOUtils {
+    //                    pc  , (mis, cor), isBr
+    type Stats = HashMap [Long, Tuple2[List[Int], Boolean]]
+
     val cfiUpdatePattern = "cfi_update".r
     val cfiUpdateInfoExtractPattern = raw"\[time= *([0-9]+)\].*isBr\(([0-1])\) pc\(([0-9|a-f]{10})\) taken\(([0-1])\) mispred\(([0-1])\) cycle\( *([0-9]+)\) hist\( *([0-9|a-f]+)\)".r.unanchored
     val cfiPredInfoExtractPattern = raw"\[time= *([0-9]+)\].*cfi_pred: fetchpc\(([0-9|a-f]{10})\) mask\( *([0-9]+)\) brmask\( *([0-9]+)\) hist\(([0-9|a-f]+)\) histPtr\( *([0-9]+)\)".r.unanchored
@@ -119,6 +123,57 @@ class TraceWrapper() extends PredictorUtils with FileIOUtils {
             (numBrMispred, numBr, numJMispred, numCFI)
         }).getOrElse((0,0,0,0))
     }
+
+    def xsStat(file: String): Stats = {
+        val emptyStat = HashMap [Long, Tuple2[List[Int], Boolean]]()
+        readFile(file, s => {
+            val cfis = getCFIUpdateInfosFromSource(s)
+            def loop(acc: Stats): Stats = {
+                if (!cfis.hasNext) acc
+                else {
+                    cfis.next() match {
+                        case CFIUpdateInfo(_,isBr,pc,_,misPred,_,_) => {
+                            def bToI(mis: Boolean) = if (mis) 1 else 0
+                            def makeStat = {
+                                if (acc.contains(pc)) {
+                                    val (cor::mis::Nil, _) = acc(pc)
+                                    (List(cor+bToI(!misPred),mis+bToI(misPred)), isBr)
+                                }
+                                else {
+                                    (List(bToI(!misPred),bToI(misPred)), isBr)
+                                }
+                            }
+                            loop(acc + ((pc, makeStat)))
+                        }
+                        case _ => loop(acc)
+                    }
+                }
+            }
+            loop(emptyStat)
+        }).getOrElse(emptyStat)
+    }
+
+    def getAndPrintPreds(stats: Stats, maxBrPrint: Int = 10): (Int, Int, Int) = {
+        var brPrint = 0
+        var totalPred = 0
+        var totalMiss = 0
+        var totalCorr = 0
+        stats.toList.sortBy(_._2._1(1)).reverse.foreach{ case(pc, (arr, isBr)) => {
+            val miss = arr(1)
+            val corr = arr(0)
+            if (brPrint < maxBrPrint || maxBrPrint == -1) {
+                println(f"pc: $pc%x, type: ${if(isBr) "br" else "j"}%2s, mispredict: ${miss}%10d, correct: ${corr}%10d, total: ${miss+corr}%10d, missrate: ${miss*100/(miss+corr).toDouble}%3.2f%%")
+                brPrint += 1
+            }
+            totalMiss += arr(1)
+            totalCorr += arr(0)
+            totalPred += arr.reduce(_+_)
+        }}
+        (totalMiss, totalCorr, totalPred)
+    }
+
+    def printXSStats(file: String, maxBr: Int = -1) =
+        getAndPrintPreds(xsStat(file), maxBr)
 
     def checkHist(file: String) = {
         var h: Long = 0
@@ -273,11 +328,12 @@ class TraceWrapper() extends PredictorUtils with FileIOUtils {
 
 
 
-// object WrapperTest{
-//     def main(args: Array[String]): Unit = {
-//         val tw = new TraceWrapper
-//         val file = "/home/glr/nexus-am/tests/cputest/build/dummy.log"
-//         tw.getCFIInfosFromFile(file).foreach(println)
-//     }
-// }
+object WrapperTest{
+    def main(args: Array[String]): Unit = {
+        val tw = new TraceWrapper
+        val file = "/home/glr/xs_alt/XiangShan/debug/coremark_sfb_test.log"
+        tw.printXSStats(file)
+        // tw.getCFIInfosFromFile(file).foreach(println)
+    }
+}
 
