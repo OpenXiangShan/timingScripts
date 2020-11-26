@@ -6,6 +6,7 @@ target/.history
 branch_record/*
 verilog/*
 log*
+.metals/*
 ### XilinxISE template
 # intermediate build files
 *.bgn
