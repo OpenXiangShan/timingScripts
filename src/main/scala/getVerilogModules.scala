@@ -22,7 +22,15 @@ trait FileIOUtils {
     }
 
     def readFile[T](f: String, action: (scala.io.BufferedSource) => T): Try[T] = {
-        Using(Source.fromFile(f)) { s => action(s) }
+        def checkExistence(file: String): String = {
+            val f = new File(file)
+            if (!f.exists()) {
+                println(s"file $f does not exist!")
+                sys.exit()
+            }
+            file
+        }
+        Using(Source.fromFile(checkExistence(f))) { s => action(s) }
     }
 }
 
@@ -95,7 +103,7 @@ class VerilogModuleExtractor() extends FileIOUtils {
 
     def writeModuleToFile(name: String, record: ModuleRecord, dir: String) = {
         val path = dir+name+".v"
-        println(f"Writing module $name to $path")
+        println(f"Writing module $name%20s to $path")
         writeToFile(path, w => {
             record._1.foreach(l => w.write(f"$l\n"))
         })
@@ -117,14 +125,19 @@ class VerilogModuleExtractor() extends FileIOUtils {
     
     // We first get records of all the modules and its submodule record
     // Then we choose a module as the root node to traverse its submodule
-    def processFromModule(name: String, map: ModuleMap, outPath: String, doneSet: Set[String] = Set()): Unit = {
+    def processFromModule(name: String, map: ModuleMap, outPath: String, doneSet: Set[String] = Set(), top: Tuple2[String, Boolean]): Unit = {
         def printSRAMs(sub: List[SubMoudleRecord]) = {
             sub map { t => t match {
                 case (ty, subn) if (ty contains "SRAM") => println(s"top module $name, sub module type $ty, name $subn")
                 case _ =>
             }}
         }
-        
+        val (topName, isTop) = top
+        if (!map.contains(name)) {
+            println(s"${if (isTop) "chosen top" else s"submodule of ${topName},"} module $name does not exist!")
+            return
+        }
+        if (isTop) println(s"\nProcessing top module $name")
         val r = map(name)
         new File(outPath).mkdirs() // ensure the path exists
         writeModuleToFile(name, r, outPath)
@@ -132,9 +145,9 @@ class VerilogModuleExtractor() extends FileIOUtils {
         // printSRAMs(submodules)
         // DFS
         val subTypesSet = submodules map (m => m._1) toSet
-        val nowMap = map - "name"
+        val nowMap = map - name
         val nowSet = doneSet ++ subTypesSet
-        subTypesSet.foreach { s  => if (!doneSet.contains(s)) processFromModule(s, nowMap, outPath, nowSet) }
+        subTypesSet.foreach { s  => if (!doneSet.contains(s)) processFromModule(s, nowMap, outPath, nowSet, (if (isTop) name else topName, false)) }
     }
 
     def getDate: String = {
@@ -149,10 +162,12 @@ class VerilogModuleExtractor() extends FileIOUtils {
             outDir+"/") + getDate + "-" + user + "-" + topModule + "/"
     }
 
+
+
     def extract(src: String, topModule: String, outDir: String, user: String, mapp: Option[ModuleMap]): Unit = {
         val useMap = mapp.getOrElse(makeRecordFromFile(src))
         val path = makePath(topModule, outDir, user)
-        processFromModule(topModule, useMap, path)
+        processFromModule(topModule, useMap, path, top=(topModule, true))
     }
 
     def extract(src: String, topModules: List[String], outDir: String, user: String): Unit = {
