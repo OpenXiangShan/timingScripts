@@ -230,7 +230,7 @@ trait VMEArgParser {
         (paramMap("source").map(_.asInstanceOf[String]).getOrElse(env("NOOP_HOME")+"/build/XSSimTop.v"),
          paramMap("modules").map(_.asInstanceOf[List[String]]).getOrElse(List("IFU")),
          paramMap("output").map(_.asInstanceOf[String]).getOrElse(env("NOOP_HOME")+"/build/extracted/"),
-         paramMap("usr").map(_.asInstanceOf[String]).getOrElse("whoami".!!))
+         paramMap("usr").map(_.asInstanceOf[String]).getOrElse("whoami".!!.init))
     }
 }
 
