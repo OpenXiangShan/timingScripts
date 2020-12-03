@@ -9,6 +9,7 @@ import scala.util.Try
 import scala._
 import scala.collection.mutable
 import java.io._
+import java.util.Date
 import scala.language.postfixOps
 import sys.process._
 import sys._
@@ -27,6 +28,10 @@ trait FileIOUtils {
             if (!f.exists()) {
                 println(s"file $f does not exist!")
                 sys.exit()
+            } else {
+                val mtime = f.lastModified()
+                val d = new Date(mtime)
+                println(s"$file was last modified at $d")
             }
             file
         }
