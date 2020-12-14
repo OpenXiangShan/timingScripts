@@ -41,9 +41,9 @@ trait FileIOUtils {
 
 class VerilogModuleExtractor() extends FileIOUtils {
     //                            name
-    val modulePattern = "module ([\\w]+)\\(".r.unanchored
+    val modulePattern = "module *([\\w]+)\\(".r.unanchored
     //                       type      name
-    val subMoudlePattern = "([\\w]+) ([\\w]+) \\((?: //.*)*\\Z".r.unanchored
+    val subMoudlePattern = "([\\w]+) ([\\w]+) *\\((?: //.*)*\\Z".r.unanchored
     val endMoudleIOPattern = "\\);".r.unanchored
     val endMoudlePattern = "endmodule".r.unanchored
 
