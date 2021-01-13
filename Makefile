@@ -39,8 +39,26 @@ endif
 tap:
 	mill timing.runMain timing.TAPTest $(TAP_ARGS)
 
+# tdp arguments
+ifdef TDP_SOURCE
+TDP_ARGS = -s $(TDP_SOURCE)
+endif
+ifdef TDP_SLACK
+TDP_ARGS += --slack $(TDP_SLACK)
+endif
+ifdef help
+TDP_ARGS = -h
+endif
+
+#TODO: a script which
+# 1. get all timing report paths in 199:/share/
+# 2. if there exists an detail file, then process it and put it there
+tdp:
+	mill timing.runMain timing.TDPTest $(TDP_ARGS)
+
 help:
 	mill timing.runMain timing.VMETest -h
 	mill timing.runMain timing.TAPTest -h
+	mill timing.runMain timing.TDPTest -h
 
-.PHONY: vme tap help
+.PHONY: vme tap tdp help

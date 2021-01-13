@@ -8,7 +8,7 @@
 + **VME_OUTPUT**  
     the place you want to store your extracted verilog  
     default: $NOOP_HOME/build/extracted  
-+ **VMNE_USR**  
++ **VME_USR**  
     your name, will be used to name the output folder  
     default: current user  
 + **VME_MODULES**  
@@ -24,3 +24,12 @@
 + **TAP_CYCLE**  
     cycle length(ns)  
     default: 0.4
+
+## tdp
+    Usage: make tdp [OPTIONS]
++ **TDP_SOURCE**  
+    the timing detail report file you would like to process  
+    **MUST** be assigned
++ **TDP_SLACK**  
+    paths with slack more than this value will be printed out 
+    default: 0.0
