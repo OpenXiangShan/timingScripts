@@ -127,9 +127,9 @@ trait TDPArgParser {
     type OptionMap = Map[String, Option[String]]
 
     val usage = """
-        timingAnalysisProcessor
-        Usage: mill timing.runMain vme.TAPTest [OPTION...]
-            -s, --source   the timing analysis you would like to extract
+        timingDetailProcessor
+        Usage: mill timing.runMain vme.TDPTest [OPTION...]
+            -s, --source   the timing detail you would like to extract
                            default: none
                            MUST BE SPECIFIED
             --slack        paths with slack more than this value will be printed out
